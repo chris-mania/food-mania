@@ -26,6 +26,7 @@
     t = t.replace(/\s+/g, ' ');
     t = t.split(' ').map((w) => (TYPOS[w] !== undefined ? TYPOS[w] : w)).join(' ');
     t = t.replace(/\bice (coffee|latte|tea|mocha|matcha|chai|americano|macchiato|cappuccino)\b/g, 'iced $1');
+    if (/\bice\b/.test(t) && /\b(coffee|latte|tea|mocha|matcha|chai|americano|macchiato|cappuccino|espresso|cold brew)\b/.test(t)) t = t.replace(/\bice\b(?! cream| cube| pop| skat| rink)/g, 'iced');
     return t.replace(/\s+/g, ' ').trim();
   }
 
@@ -148,16 +149,40 @@
     parmesan: ['parmesan', 'parm', 'parmigiana']
   };
   const FAMILY_ONLY = { chicken: ['chicken', 'wing', 'tender', 'nugget', 'francese', 'marsala', 'piccata'] };
+  // what each kind of place almost always serves (used for "Likely · check the menu")
+  const BAR = ['sports bar', 'bar', 'pub', 'tavern', 'gastropub', 'brewery', 'brewpub', 'ale house', 'saloon', 'taproom'];
+  const AMER = ['american', 'diner', 'grill', 'bar and grill'];
   const LIKELY = {
-    wing: ['sports bar', 'bar', 'pizza', 'chicken'], pickle: ['sports bar', 'bar', 'chicken'],
-    noodle: ['hibachi', 'japanese', 'chinese', 'thai', 'vietnamese', 'ramen'], coffee: ['cafe', 'coffee shop', 'coffee', 'diner', 'donut'],
-    latte: ['cafe', 'coffee shop'], sandwich: ['fast food', 'chicken', 'diner', 'deli'], chicken: ['chicken', 'diner', 'american', 'fast food', 'sports bar'],
-    taco: ['mexican'], burrito: ['mexican'], quesadilla: ['mexican'], pizza: ['pizza'], 'ice cream': ['ice cream', 'dessert'],
-    burger: ['diner', 'american', 'sports bar', 'bar', 'fast food'], cheese: ['italian', 'pizza', 'diner'], francese: ['italian', 'diner'],
-    marsala: ['italian', 'diner'], dessert: ['ice cream', 'dessert', 'bakery', 'italian'], sushi: ['sushi', 'japanese'],
-    fry: ['fast food', 'diner', 'sports bar', 'chicken', 'american'], salad: ['diner', 'american', 'italian', 'cafe'], bagel: ['bakery', 'cafe', 'deli'],
-    'bubble tea': ['cafe', 'tea', 'bubble tea'], steak: ['steakhouse', 'american'], pancake: ['diner', 'breakfast'], 'fried rice': ['hibachi', 'japanese', 'chinese']
+    wing: BAR.concat(['pizza', 'chicken', 'wings', 'american']), pickle: BAR.concat(['chicken', 'deli']), nacho: BAR.concat(['mexican', 'tex-mex', 'american']),
+    slider: BAR.concat(['american', 'burger']), 'mozzarella stick': BAR.concat(['pizza', 'diner', 'american']), mozzarella: ['pizza', 'italian', 'diner'],
+    quesadilla: ['mexican', 'tex-mex'].concat(BAR), tender: BAR.concat(['chicken', 'fast food', 'diner', 'american']), finger: BAR.concat(['chicken', 'diner']),
+    'potato skin': BAR, pretzel: BAR.concat(['brewery']), 'onion ring': BAR.concat(['diner', 'burger', 'american']), 'fish and chips': BAR.concat(['seafood', 'irish', 'british']),
+    beer: BAR.concat(['brewery', 'pizza', 'mexican']), cocktail: BAR.concat(['lounge', 'steak house', 'steakhouse']), margarita: ['mexican', 'tex-mex'].concat(BAR),
+    noodle: ['hibachi', 'japanese', 'chinese', 'thai', 'vietnamese', 'ramen', 'asian', 'korean'], coffee: ['cafe', 'coffee shop', 'coffee', 'diner', 'donut', 'bagel', 'bakery', 'breakfast'],
+    latte: ['cafe', 'coffee shop', 'coffee'], cappuccino: ['cafe', 'coffee shop', 'coffee', 'italian'], espresso: ['cafe', 'coffee shop', 'coffee', 'italian'], tea: ['cafe', 'coffee shop', 'tea', 'chinese', 'japanese'],
+    matcha: ['cafe', 'coffee shop', 'tea'], chai: ['cafe', 'coffee shop', 'indian'], smoothie: ['cafe', 'juice', 'smoothie'], 'hot chocolate': ['cafe', 'coffee shop', 'donut'],
+    sandwich: ['fast food', 'chicken', 'diner', 'deli', 'sandwich', 'cafe'].concat(BAR), chicken: ['chicken', 'diner', 'american', 'fast food', 'wings'].concat(BAR),
+    taco: ['mexican', 'tex-mex'], burrito: ['mexican', 'tex-mex'], enchilada: ['mexican', 'tex-mex'], guacamole: ['mexican', 'tex-mex'], churro: ['mexican'],
+    pizza: ['pizza', 'italian'], calzone: ['pizza', 'italian'], 'garlic knot': ['pizza'], stromboli: ['pizza'],
+    pasta: ['italian', 'pizza'], lasagna: ['italian'], ravioli: ['italian'], meatball: ['italian', 'pizza'], calamari: ['italian', 'seafood'].concat(BAR), parmesan: ['italian', 'pizza'],
+    vodka: ['italian'].concat(BAR), francese: ['italian', 'diner'], marsala: ['italian', 'diner'], 'ice cream': ['ice cream', 'dessert', 'frozen yogurt', 'gelato'],
+    burger: AMER.concat(BAR, ['fast food', 'burger']), cheese: ['italian', 'pizza', 'diner'], dessert: ['ice cream', 'dessert', 'bakery', 'italian', 'diner'],
+    sushi: ['sushi', 'japanese'], ramen: ['ramen', 'japanese'], tempura: ['japanese', 'sushi', 'hibachi'], teriyaki: ['japanese', 'hibachi'], gyoza: ['japanese', 'ramen'],
+    dumpling: ['chinese', 'dumpling', 'asian'], 'egg roll': ['chinese'], 'fried rice': ['hibachi', 'japanese', 'chinese', 'thai'], 'lo mein': ['chinese'], 'general tso': ['chinese'],
+    'pad thai': ['thai'], curry: ['thai', 'indian'], tikka: ['indian'], naan: ['indian'], biryani: ['indian'], pho: ['vietnamese'], 'banh mi': ['vietnamese'], bibimbap: ['korean'],
+    fry: ['fast food', 'diner', 'chicken', 'burger'].concat(AMER, BAR), salad: ['diner', 'american', 'italian', 'cafe', 'salad', 'mediterranean'], bagel: ['bagel', 'bakery', 'cafe', 'deli'],
+    'bubble tea': ['bubble tea', 'tea'], steak: ['steakhouse', 'steak house', 'brazilian', 'steak'].concat(BAR), filet: ['steakhouse', 'steak house'], ribeye: ['steakhouse', 'steak house'],
+    lobster: ['seafood', 'steakhouse', 'steak house'], shrimp: ['seafood', 'chinese', 'japanese', 'mexican', 'italian'], oyster: ['seafood'], crab: ['seafood'], clam: ['seafood', 'italian'],
+    pancake: ['diner', 'breakfast', 'brunch'], waffle: ['diner', 'breakfast', 'brunch'], omelet: ['diner', 'breakfast', 'brunch'], 'french toast': ['diner', 'breakfast', 'brunch'],
+    'pork roll': ['deli', 'diner', 'bagel'], 'taylor ham': ['deli', 'diner', 'bagel'], milkshake: ['diner', 'burger', 'ice cream'], shake: ['diner', 'burger', 'ice cream'],
+    croissant: ['bakery', 'cafe', 'coffee shop', 'french'], muffin: ['bakery', 'cafe', 'coffee shop', 'donut'], cookie: ['bakery', 'cafe', 'dessert'], cupcake: ['bakery', 'dessert'],
+    cake: ['bakery', 'dessert'], donut: ['donut', 'bakery'], cannoli: ['italian', 'bakery', 'pizza'], hummus: ['mediterranean', 'middle eastern', 'greek'], gyro: ['greek', 'mediterranean', 'diner'],
+    falafel: ['mediterranean', 'middle eastern'], kebab: ['mediterranean', 'middle eastern', 'turkish'], hotdog: ['hot dog'].concat(BAR), 'hot dog': ['hot dog', 'diner'].concat(BAR)
   };
+  // shops that only sell drinks or sweets: never "likely" for a meal
+  const SNACK_SHOPS = /\b(cafe|café|coffee|tea|donut|doughnut|bakery|ice cream|gelato|frozen yogurt|dessert|juice|smoothie|bubble tea|bagel|cookie|cupcake|chocolate|candy)\b/;
+  const SNACK_ITEMS = new Set(['coffee', 'latte', 'cappuccino', 'espresso', 'tea', 'matcha', 'chai', 'smoothie', 'hot chocolate', 'bubble tea', 'ice cream', 'dessert', 'croissant', 'muffin',
+    'cookie', 'cupcake', 'cake', 'donut', 'bagel', 'cannoli', 'milkshake', 'shake', 'sandwich', 'salad', 'pastry', 'iced', 'frozen', 'cold brew', 'frappe', 'mocha'])
   const GENERIC = new Set(['classic', 'fried', 'regular', 'special', 'house', 'homemade', 'fresh', 'big', 'small', 'large', 'crispy']);
 
   function itemTokens(name) {
@@ -186,16 +211,26 @@
     return { full: hits >= required && headHit, hits: hits, total: tokens.length, headHit: headHit };
   }
 
+  function placeKinds(place) {
+    return (place.types || []).concat([String(place.cuisine || '').toLowerCase(), String(place.name || '').toLowerCase()]).map((t) => ' ' + t.replace(/_/g, ' ') + ' ');
+  }
+  // 0 = no, 1 = likely, 2 = it's a staple of this kind of place (coffee at a coffee shop)
   function likelyFor(tokens, place) {
-    const types = (place.types || []).concat([String(place.cuisine || '').toLowerCase()]);
+    const kinds = placeKinds(place);
+    const main = ' ' + String(place.cuisine || (place.types || [])[0] || '').toLowerCase() + ' ';
     const head = tokens[tokens.length - 1];
-    const keys = [head].concat(tokens);
+    const keys = [tokens.join(' '), head].concat(tokens).filter((k, i, a) => a.indexOf(k) === i);
+    const snackShop = SNACK_SHOPS.test(main) && !/(restaurant|grill|bar|pub|diner|kitchen|bistro)/.test(main);
     for (const k of keys) {
       const list = LIKELY[k];
-      if (list && list.some((ty) => types.some((pt) => pt.includes(ty)))) return true;
+      if (!list) continue;
+      if (snackShop && !SNACK_ITEMS.has(k)) return 0;
+      const has = (ty) => kinds.some((pt) => pt.includes(' ' + ty + ' ') || pt.includes(' ' + ty) && ty.length > 4);
+      if (list.some(has)) return list.slice(0, 3).some((ty) => main.includes(ty)) ? 2 : 1;
     }
-    return false;
+    return 0;
   }
+
 
   // label one item for one place
   function matchItem(item, place) {
@@ -207,7 +242,7 @@
       if (s.full && !best) best = m;
       else if (s.headHit && s.hits >= Math.max(1, Math.ceil(s.total / 2)) && !partial) partial = m;
     });
-    const mentions = (place.reviews || []).filter((r) => scoreText(tokens, r.text).full);
+    const mentions = (place.reviews || []).filter((r) => String(r.text || '').split(/(?<=[.!?])\s+|\n+/).some((sen) => scoreText(tokens, sen).full));
     const positive = mentions.filter((r) => (r.rating || 5) >= 4);
     const quote = positive[0] ? shortQuote(positive[0].text, tokens) : '';
     if (best) {
@@ -224,7 +259,8 @@
     if (place.menuComplete && (place.menu || []).length) {
       return { label: 'no', rank: place.chainMenu ? -1 : -2, text: place.chainMenu ? 'Not on their usual menu' : 'Not on their menu', mentions: 0, positive: 0, quote: '' };
     }
-    if (likelyFor(tokens, place)) return { label: 'likely', rank: 1.5, text: '', mentions: 0, positive: 0, quote: '' };
+    const lk = likelyFor(tokens, place);
+    if (lk) return { label: 'likely', rank: lk === 2 ? 2.6 : 1.5, staple: lk === 2, text: '', mentions: 0, positive: 0, quote: '' };
     return { label: 'unconfirmed', rank: 0.3, text: '', mentions: 0, positive: 0, quote: '' };
   }
 
@@ -266,7 +302,8 @@
   function typeMatches(type, place) {
     const types = (place.types || []).concat([String(place.cuisine || '').toLowerCase()]);
     // the free map data often lists sports bars as plain bars or pubs
-    if (type === 'sports bar') return types.some((t) => t.includes('bar') || t.includes('pub'));
+    if (type === 'sports bar') return types.some((t) => /\b(bar|pub|tavern|gastropub|brewery|brewpub|taproom|saloon|ale house)\b/.test(t) || /\bbar\b/.test(t)) ||
+      /\b(tavern|ale house|alehouse|pub|saloon|taproom|wings|bar)\b/i.test(place.name || '') || !!(place.features && place.features.tvs);
     if (type === 'bar') return types.some((t) => t.includes('bar') || t.includes('pub'));
     if (type === 'cafe') return types.some((t) => t.includes('cafe') || t.includes('coffee'));
     return types.some((t) => t.includes(type));
@@ -379,6 +416,7 @@
   function rank(places, parsed, ctx) {
     const now = ctx.now || new Date();
     const origin = ctx.origin;
+    places = dedupe(places);
     const valid = places.filter((p) => blend(p).count > 0);
     const areaAvg = valid.length ? valid.reduce((a, p) => a + blend(p).rating, 0) / valid.length : 4.3;
     let rows = places.map((p) => {
@@ -421,9 +459,7 @@
       if (sortKey === 'score') return b.score.score - a.score.score;
       if (sortKey === 'closest') return a.minutes - b.minutes;
       if (sortKey === 'gems') return (b.gem || 0) - (a.gem || 0) || b.score.score - a.score.score;
-      if (b.match !== a.match) return b.match - a.match;
-      const sa = a.score.score - a.minutes * 0.01; const sb = b.score.score - b.minutes * 0.01;
-      return sb - sa;
+      return blendKey(b) - blendKey(a);
     });
     // groups for multi-item searches
     let groups = null;
@@ -439,6 +475,34 @@
       ];
     }
     return { rows: rows, groups: groups, others: others, ruledOut: ruledOut, radius: radius, widened: widened, areaAvg: areaAvg };
+  }
+  // best match: how well it matches, then how good it is, then how close
+  function blendKey(r) {
+    const q = r.score.count ? (r.score.score - 4.2) * 2 + Math.min(0.4, Math.log10(r.score.count + 1) * 0.12) : -0.9;
+    return r.match + q - r.minutes * 0.03;
+  }
+  // the free map list and Google sometimes hold the same spot twice; keep one
+  function dedupe(places) {
+    const clean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w && !['the', 'and', 'restaurant', 'bar', 'grill', 'cafe', 'nj', 'co', 'company', 'coffee', 'donuts'].includes(w));
+    const same = (a, b) => { const A = new Set(clean(a)); const B = clean(b); if (!A.size || !B.length) return String(a).toLowerCase() === String(b).toLowerCase(); return B.filter((w) => A.has(w)).length / Math.min(A.size, B.length) >= 0.5; };
+    const rated = (p) => (p.sources && p.sources.google ? p.sources.google.count : 0) + (p.menu && p.menu.length ? 0.5 : 0);
+    const sorted = places.slice().sort((a, b) => rated(b) - rated(a));
+    const grid = {}; const out = [];
+    sorted.forEach((p) => {
+      const gx = Math.round(p.lat / 0.002); const gy = Math.round(p.lng / 0.002);
+      let dup = null;
+      for (let i = -1; i <= 1 && !dup; i++) for (let j = -1; j <= 1 && !dup; j++) {
+        (grid[(gx + i) + '_' + (gy + j)] || []).some((q) => { if (km(p, q) < 0.15 && same(q.name, p.name)) { dup = q; return true; } return false; });
+      }
+      if (dup) {
+        if (!dup.website && p.website) dup.website = p.website;
+        if ((!dup.menu || !dup.menu.length) && p.menu && p.menu.length) { dup.menu = p.menu; dup.menuComplete = p.menuComplete; dup.chainMenu = p.chainMenu; dup.menuSource = p.menuSource; }
+        if ((!dup.hours || !dup.hours.length) && p.hours && p.hours.length) dup.hours = p.hours;
+        return;
+      }
+      (grid[gx + '_' + gy] = grid[gx + '_' + gy] || []).push(p); out.push(p);
+    });
+    return out;
   }
   function isGood(r) {
     if (!r.items.length) return r.score.score >= 4.0;
@@ -471,6 +535,6 @@
   }
 
   const api = { normalize, words, parseQuery, matchItem, itemTokens, scoreText, checkFeature, typeMatches, openInfo, fmtTime, estimateMinutes,
-    miles, blend, fmScore, gemScore, raveScore, rank, typeRank, whatToOrder, isChain, km };
+    miles, blend, fmScore, dedupe, gemScore, raveScore, rank, typeRank, whatToOrder, isChain, km };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.FMLogic = api;
 })(typeof window !== 'undefined' ? window : globalThis);

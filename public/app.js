@@ -296,7 +296,37 @@
     }
     FM.loading = null;
     if (seq === searchSeq) render();
-    if (seq === searchSeq && FM.last.data) { loadRest(seq, parsed, params, special); loadNotable(); }
+    if (seq === searchSeq && FM.last.data) { loadRest(seq, parsed, params, special); loadNotable(); checkMenus(seq, parsed, params, special); }
+  }
+
+  // Read the menus of the best unconfirmed places, two at a time, and update the list as they come in.
+  // Each menu is its own small request, which keeps the server inside the free plan.
+  async function checkMenus(seq, parsed, params, special) {
+    if (!FM.live || !parsed.items.length) return;
+    FM.menuChecked = FM.menuChecked || {};
+    const pick = () => ((FM.last && FM.last.result) ? FM.last.result.rows : []).slice(0, 15).filter((r) => r.place.website && !r.place.chainMenu &&
+      !(r.place.menu && r.place.menu.length) && !FM.menuChecked[r.place.id] && !['blocked', 'none', 'no-site'].includes(r.place.menuStatus) &&
+      r.items.some((i) => i.label === 'likely' || i.label === 'unconfirmed' || i.label === 'closest')).slice(0, 2);
+    for (let round = 0; round < 4; round++) {
+      if (seq !== searchSeq) return;
+      const batch = pick(); if (!batch.length) break;
+      FM.last.checkingMenus = batch.map((r) => r.place.name); if (currentRoute().name === 'search') softRender();
+      await Promise.all(batch.map(async (r) => {
+        const pl = r.place; FM.menuChecked[pl.id] = 1;
+        try {
+          const d = await api('/api/menu?id=' + encodeURIComponent(pl.id), { timeout: 25000 });
+          if (d.status === 'ok' && d.items && d.items.length) { pl.menu = d.items; pl.menuComplete = !!d.complete; pl.menuSource = d.source || 'website'; pl.chainMenu = d.source === 'chain'; }
+          pl.menuStatus = d.status;
+          if (d.image && !pl.webPhoto) pl.webPhoto = d.image;
+          if (d.description && !pl.description) pl.description = d.description;
+        } catch (e) { /* try again another time */ }
+      }));
+      if (seq !== searchSeq) return;
+      rerank(parsed, params, special);
+    }
+    if (seq !== searchSeq) return;
+    FM.last.checkingMenus = null;
+    if (currentRoute().name === 'search') softRender();
   }
 
   function rerank(parsed, params, special) {
@@ -449,13 +479,29 @@
     sweets: '<path d="M6 11h12l-1.5 9h-9z"/><path d="M6 11a6 5 0 0 1 12 0"/>',
     sushi: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>',
     plate: '<path d="M7 3v8a2 2 0 0 0 2 2v8M7 3v5M9 3v5M5 3v5"/><path d="M17 21V3c-2 1-3 4-3 8h3"/>'
+    ,steak: '<path d="M4 12c0-4 4-7 9-7 4 0 7 2 7 5 0 2-1 3-3 4l-1 4c-.5 2-3 3-5 2-4-1-7-4-7-8z"/><circle cx="14.5" cy="10" r="2"/>',
+    fish: '<path d="M3 12c3-4 8-6 12-4l5-3v14l-5-3c-4 2-9 0-12-4z"/><circle cx="8" cy="11" r=".8"/>',
+    bread: '<path d="M5 10a3.5 3.5 0 0 1 1.5-6.5h11A3.5 3.5 0 0 1 19 10v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M9 9v2M12 8v2M15 9v2"/>',
+    sandwich: '<path d="M3 10l9-6 9 6z"/><path d="M3 13h18"/><path d="M3 16h18l-1 3H4z"/>',
+    breakfast: '<circle cx="10" cy="12" r="7"/><path d="M17 12h5"/><circle cx="10" cy="12" r="2.5"/>',
+    basket: '<path d="M3 9h18l-2 11H5z"/><path d="M8 9l3-6M16 9l-3-6"/><path d="M9 13v4M12 13v4M15 13v4"/>',
+    beer: '<path d="M6 8h10v11a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z"/><path d="M16 11h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2"/><path d="M6 8a2.5 2.5 0 0 1 3-3.5 3 3 0 0 1 5 0A2.5 2.5 0 0 1 16 8"/>',
+    wine: '<path d="M8 3h8c0 5-1.5 8-4 8s-4-3-4-8z"/><path d="M12 11v9M8 21h8"/>'
   };
+  const ICON_RULES = [
+    ['basket', /\b(grocery|supermarket|market|food store|convenience)\b/], ['steak', /\b(steak ?house|steak|churrascaria|brazilian)\b/],
+    ['fish', /\b(seafood|fish|oyster|lobster|crab|poke)\b/], ['sushi', /\b(sushi|japanese|hibachi|omakase)\b/], ['pizza', /\b(pizza|pizzeria)\b/],
+    ['taco', /\b(mexican|tex-mex|taco|taqueria|burrito)\b/], ['icecream', /\b(ice cream|gelato|frozen yogurt|creamery)\b/],
+    ['coffee', /\b(coffee|cafe|café|espresso|tea house|tea shop|bubble tea|donut|doughnut|dunkin|starbucks)\b/], ['bread', /\b(bakery|bagel|bread|patisserie)\b/],
+    ['sweets', /\b(dessert|cookie|cake|cupcake|pastry|sweet|confection|chocolate|candy)\b/], ['breakfast', /\b(breakfast|brunch|pancake|diner)\b/],
+    ['sandwich', /\b(deli|sandwich|sub shop|hoagie|delicatessen)\b/], ['noodles', /\b(ramen|noodle|chinese|thai|vietnamese|pho|asian|korean|dumpling)\b/],
+    ['chicken', /\b(chicken|wings?)\b/], ['burger', /\b(burgers?|hamburger|fast food)\b/], ['wine', /\b(wine|fine dining|cocktail|lounge)\b/],
+    ['beer', /\b(bar|pub|tavern|brewery|brewpub|taproom|saloon|ale house|gastropub|beer)\b/], ['burger', /\b(american|grill)\b/]
+  ];
   function iconFor(p) {
-    const t = ((p.types || []).join(' ') + ' ' + (p.cuisine || '') + ' ' + p.name).toLowerCase();
-    const k = /coffee|cafe|café|tea|donut|bagel/.test(t) ? 'coffee' : /pizza/.test(t) ? 'pizza' : /mexican|taco|burrito/.test(t) ? 'taco'
-      : /burger|diner|american|fast food/.test(t) ? 'burger' : /ice cream|gelato|frozen yogurt/.test(t) ? 'icecream' : /bar|pub|brewery|wine|cocktail/.test(t) ? 'drink'
-      : /ramen|noodle|chinese|thai|vietnam|pho|asian|korean/.test(t) ? 'noodles' : /chicken|wing/.test(t) ? 'chicken' : /bakery|dessert|cookie|cake|pastry|sweet|confection/.test(t) ? 'sweets'
-      : /sushi|japanese|hibachi/.test(t) ? 'sushi' : 'plate';
+    const tries = [String(p.cuisine || '') + ' ' + (p.types || []).join(' '), String(p.name || '')].map((x) => x.toLowerCase().replace(/_/g, ' '));
+    let k = 'plate';
+    for (const t of tries) { const r = ICON_RULES.find((x) => x[1].test(t)); if (r) { k = r[0]; break; } }
     return '<svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9A0000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + ICONS[k] + '</svg>';
   }
   function photo(p, style) {
@@ -521,6 +567,7 @@
     if (data.anchorName) notes.unshift('Showing places near ' + data.anchorName + '.');
     if (res.widened) notes.push(res.widened >= 999 ? 'Not much close by, so we looked farther out.' : 'Not much close by, so we looked up to ' + res.widened + ' min away.');
     notes.forEach((n) => { html += '<div class="notice">' + esc(n) + '</div>'; });
+    if (last.checkingMenus && last.checkingMenus.length) html += '<div class="notice" aria-live="polite"><span class="shim" style="display:inline-block;width:14px;height:14px;border-radius:7px;vertical-align:-2px;margin-right:6px"></span>Checking menus: ' + esc(last.checkingMenus.join(', ')) + '</div>';
     if (last.loadingMore) html += '<div class="notice" aria-live="polite"><span class="shim" style="display:inline-block;width:14px;height:14px;border-radius:7px;vertical-align:-2px;margin-right:6px"></span>Loading more of your area (first time only). The list updates as places come in.</div>';
     if (parsed.features.some((f) => ['romantic', 'view', 'rooftop', 'outdoor'].includes(f.key))) {
       const o = (data.origin || origin()); const ss = sunsetToday(o.lat, o.lng);
@@ -528,8 +575,12 @@
     }
     if (last.games && last.games.length) html += '<div class="notice"><b style="color:var(--ink)">Games today:</b> ' + last.games.map((g) => esc(g.name)).join(' · ') + '</div>';
     const count = res.rows.length;
-    if (parsed.items.length && count && res.rows.every((r) => r.items.every((i) => i.label === 'unconfirmed'))) {
-      html += '<div class="notice warn">We couldn\u2019t find "' + esc(parsed.items.map((i) => i.name).join(', ')) + '" on any menu or review nearby. Check the spelling, or try a broader word. Here are places that might still have it.</div>';
+    if (parsed.items.length && count && !res.rows.some((r) => r.items.some((i) => i.label === 'menu' || i.label === 'reviews' || i.label === 'specialty'))) {
+      const what = parsed.items.map((i) => i.name).join(', ');
+      const anyLikely = res.rows.some((r) => r.items.some((i) => i.label === 'likely'));
+      html += '<div class="notice">' + (anyLikely
+        ? 'None of the menus we’ve read so far list "' + esc(what) + '", but places like these usually have it. Tap See menu to check, and we’ll keep reading more menus.'
+        : 'We haven’t found "' + esc(what) + '" on a menu nearby yet. These are the closest fits. If it’s spelled differently on menus, try another word.') + '</div>';
     }
     const confirmed = res.rows.filter((r) => r.items.length && r.items.every((i) => i.label === 'menu' || i.label === 'reviews' || i.label === 'specialty')).length;
     html += '<div class="small muted">' + count + ' place' + (count === 1 ? '' : 's') + ' near ' + esc((data.origin || origin()).name) + (parsed.items.length ? ' · ' + confirmed + ' confirmed' : '') + '</div>';
@@ -568,7 +619,7 @@
     let matches = '';
     r.items.forEach((m) => {
       const lab = LABELS[m.label];
-      let text = m.text || (m.label === 'likely' ? m.item + ' · check the menu' : m.label === 'no' ? 'Not on their menu' : m.item);
+      let text = m.text || (m.label === 'likely' ? (m.staple ? m.item + ' · a staple here, check the menu' : m.item + ' · check the menu') : m.label === 'no' ? 'Not on their menu' : m.item);
       if (m.label === 'menu' && m.chainMenu) text += ' (chain menu)';
       matches += '<div class="match-line"><div class="row gap8" style="min-width:0;flex:1"><span class="badge ' + lab[1] + '">' + lab[0] + '</span><span class="name">' + esc(text) + '</span></div>' +
         (m.price ? '<b class="small">' + money(m.price) + '</b>' : '') + '</div>';

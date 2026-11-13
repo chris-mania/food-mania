@@ -42,6 +42,14 @@ export async function onRequestPost(ctx) {
     });
   }
   await ensureSchema(env.DB);
+  // skip spots Google already gave us (same name within 150 m), so the list doesn't show them twice
+  const g = await env.DB.prepare("SELECT name, lat, lng FROM places WHERE id LIKE 'g-%' AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 1500")
+    .bind(b.s - 0.003, b.n + 0.003, b.w - 0.003, b.e + 0.003).all();
+  const gl = g.results || [];
+  if (gl.length) {
+    const keep = clean.filter((p) => !gl.some((q) => Math.abs(q.lat - p.lat) < 0.0015 && Math.abs(q.lng - p.lng) < 0.002 && kmBetween(p, q) < 0.15 && similarName(p.name, q.name)));
+    clean.length = 0; keep.forEach((x) => clean.push(x));
+  }
   for (let i = 0; i < clean.length; i += 80) await env.DB.batch(insertNewStatements(env.DB, clean.slice(i, i + 80), (p) => chainKey(p.brand || p.name)));
   await markCells(env.DB, [cell]);
   // breweries for this neighborhood's area, once (small, quick)

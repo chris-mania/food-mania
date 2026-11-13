@@ -59,13 +59,8 @@ export async function onRequestPost(ctx) {
     if (p.reviews) p.reviews = p.reviews.slice(0, 5).map((r) => ({ rating: r.rating, text: String(r.text || '').slice(0, 400) }));
   });
 
-  // 4) Read a couple of unread menus in the background, most relevant first
-  const relevant = (p) => words.reduce((s, w) => s + ((p.name + ' ' + (p.types || []).join(' ') + ' ' + (p.cuisine || '')).toLowerCase().includes(w) ? 1 : 0), 0);
-  const toRead = all.filter((p) => p.website && !chainKey(p.brand || p.name) && (!p.menuStatus || (p.menuAt && Date.now() - p.menuAt > 90 * DAY_MS && p.menuStatus !== 'blocked')))
-    .sort((a, b) => relevant(b) - relevant(a) || ((b.sources && b.sources.google ? b.sources.google.count : 0) - (a.sources && a.sources.google ? a.sources.google.count : 0)))
-    .slice(0, 2);
-  if (toRead.length) ctx.waitUntil(Promise.all(toRead.map((p) => readAndSave(env, p))));
-
+  // 4) Menus are read by the app one place at a time through /api/menu (keeps this request small)
+  const toRead = [];
   return json({ places: all, notes, googleLimited, readingMenus: toRead.length, moreToLoad: stillMissing, loadFailed });
 }
 

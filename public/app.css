@@ -74,8 +74,8 @@ h2.sec { margin: 0; font-family: var(--display); font-weight: 800; font-size: 20
 .match { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-top: 1px solid #F1EBE4; background: #FCFAF8; }
 .match-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .match-line .name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.card-actions { display: flex; gap: 8px; padding: 0 12px 12px; background: #FCFAF8; }
-.mini { min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--card); font-size: 13px; font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px; background: #FCFAF8; }
+.mini { min-height: 36px; padding: 0 10px; white-space: nowrap; flex-shrink: 0; border-radius: 10px; border: 1px solid var(--line2); background: var(--card); font-size: 13px; font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
 .mini.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .group-h { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 8px 0 2px; }
 .notice { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; font-size: 13px; color: var(--muted); }

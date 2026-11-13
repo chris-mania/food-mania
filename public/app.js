@@ -3,7 +3,6 @@
   'use strict';
   const L = window.FMLogic;
   const $app = document.getElementById('app');
-  const DEFAULT_ORIGIN = { name: 'Paramus, NJ', lat: 40.9445, lng: -74.0754 };
   const FEATURE_PHRASE = { tvs: 'tvs', drinks: 'drinks', kids: 'kid friendly', view: 'view', rooftop: 'rooftop', outdoor: 'outdoor seating',
     romantic: 'date night', quiet: 'quiet', liveMusic: 'live music', reservable: 'reservations', cheap: 'cheap', fancy: 'fancy', openNow: 'open now', late: 'late night', vegan: 'vegan', vegetarian: 'vegetarian', glutenFree: 'gluten free', wheelchair: 'wheelchair accessible', driveThru: 'drive thru', takeaway: 'takeout', delivery: 'delivery' };
   const STATE_TEXT = { yes: 'yes', reviews: 'per reviews', likely: 'likely', unknown: 'not sure', no: 'no' };
@@ -25,13 +24,16 @@
   function money(n) { return n ? '$' + (Number.isInteger(n) ? n : n.toFixed(2)) : ''; }
   function dollars(level) { return level ? '$'.repeat(level) : ''; }
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-  function origin() { return FM.origin || DEFAULT_ORIGIN; }
+  function origin() { return FM.origin || { name: '', lat: 0, lng: 0 }; }
   function num(n) { return Number(n || 0).toLocaleString('en-US'); }
   async function api(path, opts) {
     const o = Object.assign({ headers: {} }, opts || {});
     if (o.json) { o.method = o.method || 'POST'; o.headers['content-type'] = 'application/json'; o.body = JSON.stringify(o.json); delete o.json; }
     if (o.turnstile && FM.turnstile) { const t = await turnstileToken(); if (t) o.headers['x-turnstile-token'] = t; }
-    const res = await fetch(path, o);
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), o.timeout || 30000);
+    o.signal = ctrl.signal; delete o.timeout;
+    let res;
+    try { res = await fetch(path, o); } catch (err) { const e = new Error(err.name === 'AbortError' ? 'timeout' : 'network'); e.status = 0; throw e; } finally { clearTimeout(t); }
     if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
     return res.json();
   }
@@ -95,7 +97,7 @@
   }
 
   async function loadExtras() {
-    if (!FM.live) return;
+    if (!FM.live || !FM.origin) return;
     const o = origin();
     const jobs = [
       api('/api/holiday').then((d) => { FM.extras.holiday = d && d.today; }),
@@ -142,6 +144,23 @@
   }
   function radiusKm() { return FM.radius >= 999 ? 30 : Math.min(30, Math.max(3, FM.mode === 'walk' ? FM.radius * 0.09 : FM.radius * 0.85)); }
 
+  // Load missing neighborhoods from OpenStreetMap on the phone, then save them to memory. Returns how many are left.
+  async function loadArea(o, maxCells, onDetail) {
+    let missing = [];
+    try { missing = (await api('/api/areas?lat=' + o.lat + '&lng=' + o.lng + '&km=' + Math.min(radiusKm(), 6), { timeout: 15000 })).missing || []; } catch (e) { return 0; }
+    const now = missing.slice(0, maxCells);
+    let done = 0;
+    const one = async (m) => {
+      try {
+        const places = await window.FMOSM.overpassBox(m.box.s, m.box.w, m.box.n, m.box.e);
+        await api('/api/areas', { json: { cell: m.cell, places: places }, timeout: 30000 });
+      } catch (e) { /* skip this one; it'll be tried next time */ }
+      done++; if (onDetail) onDetail(done, now.length);
+    };
+    for (let i = 0; i < now.length; i += 2) await Promise.all(now.slice(i, i + 2).map(one));
+    return missing.length - now.length;
+  }
+
   // The staged load. onStep(i) moves the progress bar.
   async function fetchPlaces(parsed, onStep) {
     let o = origin(); let anchorName = null;
@@ -156,10 +175,11 @@
         else notes.push('Couldn’t find "' + parsed.anchor + '", so these are near ' + o.name + '.');
       } catch (e) { notes.push('Couldn’t look up "' + parsed.anchor + '" right now, so these are near ' + o.name + '.'); }
     }
+    const left = await loadArea(o, 4, (d, n) => { if (FM.loading) { FM.loading.detail = 'Loading your area: ' + d + ' of ' + n + ' neighborhoods'; renderProgressOnly(); } });
     let res;
     try {
-      res = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: radiusKm(), queries: liveQueries(parsed), words: searchWords(parsed) }, turnstile: true });
-    } catch (e) { throw new Error(e.status === 429 ? 'limit' : 'search'); }
+      res = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: radiusKm(), queries: liveQueries(parsed), words: searchWords(parsed) }, turnstile: true, timeout: 45000 });
+    } catch (e) { throw new Error(e.status === 429 ? 'limit' : e.message === 'timeout' ? 'timeout' : 'search'); }
     const places = res.places || [];
     (res.notes || []).forEach((n) => notes.push(n));
     FM.googleLimited = !!res.googleLimited;
@@ -185,9 +205,38 @@
     onStep(3);
     if (res.readingMenus) notes.push('Reading ' + res.readingMenus + ' more menu' + (res.readingMenus === 1 ? '' : 's') + ' from restaurant websites. Results get sharper every search.');
     setPlaces(places);
-    const out = { places: places, origin: o, anchorName: anchorName, notes: notes };
+    const out = { places: places, origin: o, anchorName: anchorName, notes: notes, moreToLoad: left };
     FM.cache[key] = out;
     return out;
+  }
+
+  // ---------- first step: where to look ----------
+  function viewOnboarding(msg) {
+    return '<div class="pad col gap12" style="min-height:90vh;justify-content:center;max-width:460px;margin:0 auto">' +
+      '<img src="logo-wide.png" alt="Food Mania" style="height:56px;width:auto;align-self:flex-start">' +
+      '<h1 class="hero" style="margin-top:8px">Where should<br>we look?</h1>' +
+      '<p class="muted" style="margin:0;line-height:1.45">Food Mania finds food near a spot you choose. You can change it anytime from the top of the home screen.</p>' +
+      (msg ? '<div class="notice warn" role="alert">' + esc(msg) + '</div>' : '') +
+      '<button class="big-btn" data-act="geo">' + I.pin + ' Use my current location</button>' +
+      '<div class="row gap8 muted small" style="justify-content:center"><span style="flex:1;height:1px;background:var(--line)"></span>or<span style="flex:1;height:1px;background:var(--line)"></span></div>' +
+      '<form class="col gap8" data-form="loc"><label for="locq" class="small bold">Type a town, ZIP, address or hotel</label>' +
+      '<input id="locq" class="text" placeholder="Paramus, NJ · 07652 · Omni Nashville" autocomplete="off"><button class="big-btn dark" type="submit">Set location</button></form>' +
+      '</div>';
+  }
+  async function useGPS(btn) {
+    if (!navigator.geolocation) { showLocError('Location isn’t available on this device. Type a town instead.'); return; }
+    if (btn) btn.textContent = 'Finding you…';
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude; const lng = pos.coords.longitude;
+      let name = 'Your location';
+      try { const d = await api('/api/geocode?reverse=1&lat=' + lat + '&lng=' + lng, { timeout: 8000 }); if (d && d.name) name = d.name; } catch (e) { /* keep generic name */ }
+      setOrigin({ name: name, lat: lat, lng: lng, gps: true });
+    }, (err) => {
+      showLocError(err && err.code === 1 ? 'Location is turned off for this site. Allow it in your phone’s settings, or type a town instead.' : 'Couldn’t get your location. Type a town instead.');
+    }, { timeout: 12000, maximumAge: 300000, enableHighAccuracy: false });
+  }
+  function showLocError(msg) {
+    if (!FM.origin) { $app.innerHTML = viewOnboarding(msg); } else sheetLocation(msg);
   }
 
   // ---------- routing ----------
@@ -208,7 +257,7 @@
   function route() {
     const r = currentRoute();
     closeSheet();
-    if (r.name === 'results') startSearch(r.params);
+    if (r.name === 'results' && FM.origin) startSearch(r.params);
     else render();
     window.scrollTo(0, 0);
   }
@@ -221,6 +270,7 @@
     FM.radius = params.get('r') ? Number(params.get('r')) : FM.userRadius;
     const seq = ++searchSeq;
     let parsed = L.parseQuery(q);
+    if (!q && !special) { FM.loading = null; FM.last = { q: '', parsed: parsed, special: '', result: null, error: null, empty: true }; render(); setTimeout(() => { const i = document.getElementById('q'); if (i) i.focus(); }, 50); return; }
     if (special === 'hungry') { parsed.features.push({ key: 'openNow', label: 'Open now' }); }
     FM.ui.showOthers = false; FM.ui.showRuled = false; FM.ui.shown = 30;
     FM.loading = { step: 0, q: q, special: special };
@@ -242,10 +292,53 @@
         if (top3.length >= 2) FM.wheel.suggested = top3;
       }
     } catch (e) {
-      FM.last.error = e.message === 'limit' ? 'limit' : 'search';
+      FM.last.error = e.message === 'limit' ? 'limit' : e.message === 'timeout' ? 'timeout' : 'search';
     }
     FM.loading = null;
     if (seq === searchSeq) render();
+    if (seq === searchSeq && FM.last.data) { loadRest(seq, parsed, params, special); loadNotable(); }
+  }
+
+  function rerank(parsed, params, special) {
+    const data = FM.last.data;
+    const radius = special === 'hungry' ? Math.min(FM.radius, 10) : FM.radius;
+    FM.last.result = L.rank(data.places, parsed, { origin: data.origin, now: new Date(), radius: radius, fixedRadius: params.get('fixed') === '1', mode: FM.mode,
+      sort: special === 'gems' ? 'gems' : FM.sort, gemsOnly: special === 'gems', driveMinutes: FM.driveMinutes, minGood: special === 'gems' ? 1 : 6 });
+  }
+  function softRender() { const y = window.scrollY; render(); window.scrollTo(0, y); }
+
+  // A new area loads a few neighborhoods at a time; keep going in the background and refresh the list.
+  async function loadRest(seq, parsed, params, special) {
+    const data = FM.last.data; let tries = 0;
+    while (data.moreToLoad > 0 && tries < 14 && seq === searchSeq) {
+      tries++;
+      FM.last.loadingMore = data.moreToLoad; softRender();
+      try {
+        const o = data.origin;
+        const leftNow = await loadArea(o, 4);
+        const res = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: radiusKm(), queries: [], words: searchWords(parsed) }, timeout: 45000 });
+        const byId = new Map(data.places.map((p) => [p.id, p]));
+        (res.places || []).forEach((p) => byId.set(p.id, Object.assign(byId.get(p.id) || {}, p)));
+        data.places = [...byId.values()]; setPlaces(res.places || []);
+        data.moreToLoad = leftNow;
+        if (seq === searchSeq) rerank(parsed, params, special);
+      } catch (e) { break; }
+    }
+    if (seq === searchSeq) { FM.last.loadingMore = 0; softRender(); }
+  }
+
+  // Wikidata extras (Michelin, famous spots) arrive after results so they never slow a search down
+  async function loadNotable() {
+    const o = origin(); const key = o.lat.toFixed(1) + ',' + o.lng.toFixed(1);
+    FM.notableDone = FM.notableDone || {};
+    if (FM.notableDone[key]) return;
+    FM.notableDone[key] = true;
+    try {
+      const d = await api('/api/notable?lat=' + o.lat + '&lng=' + o.lng, { timeout: 25000 });
+      let changed = false;
+      Object.keys(d.wiki || {}).forEach((id) => { const p = FM.placesById[id]; if (p && !p.wiki) { p.wiki = d.wiki[id]; changed = true; } });
+      if (changed && ['results', 'place'].includes(currentRoute().name)) softRender();
+    } catch (e) { FM.notableDone[key] = false; }
   }
 
   function rebuildQuery(parsed) {
@@ -260,6 +353,7 @@
   // ---------- rendering ----------
   function render() {
     const r = currentRoute();
+    if (!FM.origin) { $app.innerHTML = viewOnboarding(); return; }
     let html = '';
     if (!FM.live) html += '<div class="demo-banner">Can\u2019t reach Food Mania\u2019s server right now. Check your connection and refresh.</div>';
     if (r.name === 'home') html += viewHome();
@@ -296,7 +390,7 @@
     if (ex.events && ex.events.length) banners += '<div class="notice">' + esc(ex.events[0].name) + ' tonight at ' + esc(ex.events[0].venue) + '. <a href="' + searchHash('restaurants near ' + ex.events[0].venue) + '">Eat nearby</a></div>';
     const cats = [['Chicken', 'chicken'], ['Tacos', 'tacos'], ['Pizza', 'pizza'], ['Coffee', 'coffee'], ['Ice cream', 'ice cream'], ['Wings', 'wings'], ['Sports bars', 'sports bar'], ['Noodles', 'noodles'], ['Late night', 'late night food']];
     return '<div class="top" style="gap:18px;padding-top:18px">' +
-      '<div class="row between"><img src="logo-wide.png" alt="Food Mania" style="height:44px;width:auto"><button class="pill-btn" data-act="location">' + I.pin + esc(o.name) + '</button></div>' +
+      '<div class="row between"><img src="logo-wide.png" alt="Food Mania" style="height:44px;width:auto"><button class="pill-btn" data-act="location" aria-label="Location: ' + esc(o.name) + '. Change">' + I.pin + '<span style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(o.name || 'Set location') + '</span></button></div>' +
       banners +
       '<h1 class="hero">What are you<br>craving?</h1>' + searchForm('', true) +
       '<div class="small muted">Try "sports bar with TVs and wings" or "chicken sandwich and fried pickles"</div></div>' +
@@ -314,7 +408,7 @@
     if (!FM.topNear) { loadTopNear(); return '<div class="pad" style="margin-top:22px"><h2 class="sec">Top near you</h2><div class="shim" style="height:120px;margin-top:12px;border-radius:16px"></div></div>'; }
     const res = L.rank(FM.topNear, L.parseQuery(''), { origin: origin(), now: new Date(), radius: 15, mode: FM.mode, sort: 'score', driveMinutes: FM.driveMinutes, minGood: 3 });
     const rows = res.rows.filter((r) => r.score.count >= 20).slice(0, 8);
-    if (!rows.length) return '';
+    if (!rows.length) return FM.topNearFailed ? '<div class="pad" style="margin-top:22px"><h2 class="sec">Top near you</h2><div class="notice" style="margin-top:10px">Couldn\u2019t load right now. <button class="mini" data-act="top-retry">Try again</button></div></div>' : '';
     return '<div class="pad" style="margin-top:22px"><div class="row between"><h2 class="sec">Top near you</h2><a class="small bold" href="' + searchHash('restaurants') + '">See all</a></div>' +
       '<div class="scroller" style="gap:12px;margin-top:12px">' + rows.map((r) => {
         const p = r.place;
@@ -331,11 +425,12 @@
     if (saved && Date.now() - saved.t < 6 * 3600 * 1000) { FM.topNear = saved.places; setPlaces(saved.places); }
     else {
       try {
-        const d = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: 12, queries: ['restaurants'], words: [] }, turnstile: true });
+        await loadArea(o, 2);
+        const d = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: 12, queries: ['restaurants'], words: [] }, turnstile: true, timeout: 45000 });
         FM.topNear = (d.places || []).filter((p) => p.sources && p.sources.google);
         setPlaces(d.places || []);
         save(k, { t: Date.now(), places: FM.topNear.slice(0, 60) });
-      } catch (e) { FM.topNear = []; }
+      } catch (e) { FM.topNear = []; FM.topNearFailed = true; }
     }
     topLoading = false;
     if (currentRoute().name === 'home') render();
@@ -380,14 +475,21 @@
     const pct = [8, 35, 60, 82, 100][s];
     return '<div class="progress" id="progress" aria-live="polite"><div class="row between"><div class="display" style="font-size:18px">' + (s >= 4 ? 'All set' : 'Hang tight, loading everything near you') + '</div><div class="small muted bold">' + pct + '%</div></div>' +
       '<div class="bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div style="width:' + pct + '%"></div></div>' +
+      (FM.loading && FM.loading.detail && s === 0 ? '<div class="small bold" style="color:var(--accent)">' + esc(FM.loading.detail) + '</div>' : '') +
       '<div class="col gap8">' + STEPS.map((t, i) => '<div class="step ' + (i < s ? 'done' : i === s ? 'active' : '') + '">' + (i < s ? I.check : '<span class="ring"></span>') + '<span>' + t + '</span></div>').join('') + '</div>' +
       '<div class="small muted">First time anyone’s searched here, so this takes a few seconds. Next time it’s instant.</div></div>';
   }
   function renderProgressOnly() { const el = document.getElementById('progress'); if (el) el.outerHTML = viewProgress(); }
 
   function viewResults() {
-    const last = FM.last || { q: '', parsed: L.parseQuery('') };
+    const last = FM.last || { q: '', parsed: L.parseQuery(''), empty: true };
     const parsed = last.parsed;
+    if (last.empty) {
+      const cats = [['Chicken', 'chicken'], ['Tacos', 'tacos'], ['Pizza', 'pizza'], ['Coffee', 'coffee'], ['Ice cream', 'ice cream'], ['Wings', 'wings'], ['Sports bars', 'sports bar'], ['Breweries', 'brewery'], ['Late night', 'late night food']];
+      return '<div class="top"><h1 class="display" style="margin:4px 0 0;font-size:26px">What are you craving?</h1>' + searchForm('', true) +
+        '<div class="small muted">Near ' + esc(origin().name) + '. Try "iced coffee", "wings and fried pickles" or "hibachi with noodles".</div></div>' +
+        '<div class="pad"><div class="chips">' + cats.map((c) => '<a class="cat" style="display:inline-flex;align-items:center" href="' + searchHash(c[1]) + '">' + c[0] + '</a>').join('') + '</div></div>';
+    }
     let html = '<div class="top"><div class="row gap8"><a class="icon-btn" href="#/" aria-label="Back">' + I.back + '</a><div style="flex:1;min-width:0">' + searchForm(last.q, false) + '</div></div>';
     const typoFixed = last.q && L.normalize(last.q) !== last.q.toLowerCase().replace(/[^a-z0-9' &,+-]/g, ' ').replace(/\s+/g, ' ').trim();
     const chips = [];
@@ -408,7 +510,7 @@
     html += '</div><div class="pad col gap12">';
     if (FM.loading) return html + viewProgress() + '<div class="card" style="padding:12px"><div class="shim" style="width:60%"></div><div class="shim" style="width:40%;margin-top:8px"></div></div></div>';
     if (last.error) {
-      return html + '<div class="notice warn">' + (last.error === 'limit' ? 'Food Mania hit its free daily search limit. It resets tomorrow. Saved areas still work.' : 'Search isn’t reachable right now. Check your signal and try again.') +
+      return html + '<div class="notice warn">' + (last.error === 'limit' ? 'Food Mania hit its free daily search limit. It resets tomorrow. Saved areas still work.' : last.error === 'timeout' ? 'That took too long. The free map service may be busy, so try again in a moment.' : 'Search isn’t reachable right now. Check your signal and try again.') +
         '</div><button class="big-btn light" data-act="retry">Try again</button></div>';
     }
     const res = last.result; if (!res) return html + '</div>';
@@ -419,6 +521,7 @@
     if (data.anchorName) notes.unshift('Showing places near ' + data.anchorName + '.');
     if (res.widened) notes.push(res.widened >= 999 ? 'Not much close by, so we looked farther out.' : 'Not much close by, so we looked up to ' + res.widened + ' min away.');
     notes.forEach((n) => { html += '<div class="notice">' + esc(n) + '</div>'; });
+    if (last.loadingMore) html += '<div class="notice" aria-live="polite"><span class="shim" style="display:inline-block;width:14px;height:14px;border-radius:7px;vertical-align:-2px;margin-right:6px"></span>Loading more of your area (first time only). The list updates as places come in.</div>';
     if (parsed.features.some((f) => ['romantic', 'view', 'rooftop', 'outdoor'].includes(f.key))) {
       const o = (data.origin || origin()); const ss = sunsetToday(o.lat, o.lng);
       if (ss && ss > new Date()) html += '<div class="notice">Sunset today is at <b style="color:var(--ink)">' + ss.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + '</b>. View and rooftop spots are best before then.</div>';
@@ -901,7 +1004,7 @@
       setOrigin({ name: g.name, lat: g.lat, lng: g.lng });
     } catch (e) { sheetLocation('Couldn’t look that up right now. Try again in a moment.'); }
   }
-  function setOrigin(o) { FM.origin = o; save('fm-origin', o); FM.cache = {}; FM.topNear = null; FM.driveMinutes = {}; closeSheet(); route(); }
+  function setOrigin(o) { FM.origin = o; save('fm-origin', o); FM.cache = {}; FM.topNear = null; FM.driveMinutes = {}; FM.notableDone = {}; closeSheet(); if (location.hash && location.hash !== '#/') location.hash = '#/'; else route(); loadExtras(); }
 
   // ---------- events ----------
   document.addEventListener('submit', (e) => {
@@ -936,12 +1039,7 @@
       case 'filters': sheetFilters(); break;
       case 'date': sheetDate(); break;
       case 'set-dist': FM.mode = el.getAttribute('data-mode'); FM.radius = Number(v); FM.userRadius = FM.radius; save('fm-radius', FM.radius); save('fm-mode', FM.mode); FM.driveMinutes = {}; FM.cache = {}; closeSheet(); go(searchHash(FM.last ? FM.last.q : '', { r: FM.radius, fixed: 1, m: FM.last ? FM.last.special : '' })); break;
-      case 'geo':
-        if (!navigator.geolocation) { sheetLocation('Location isn’t available on this device. Type a town instead.'); break; }
-        el.textContent = 'Finding you…';
-        navigator.geolocation.getCurrentPosition((pos) => setOrigin({ name: 'Your location', lat: pos.coords.latitude, lng: pos.coords.longitude }),
-          () => sheetLocation('Location is blocked. Type a town or ZIP instead.'), { timeout: 10000 });
-        break;
+      case 'geo': useGPS(el); break;
       case 'sort': FM.sort = v; if (FM.last && FM.last.data) { FM.last.result = L.rank(FM.last.data.places, FM.last.parsed, { origin: FM.last.data.origin, now: new Date(), radius: FM.radius, mode: FM.mode, sort: v, driveMinutes: FM.driveMinutes, minGood: 6 }); render(); } break;
       case 'rm-item': parsed.items.splice(i, 1); go(searchHash(rebuildQuery(parsed))); break;
       case 'rm-type': parsed.types.splice(i, 1); go(searchHash(rebuildQuery(parsed))); break;
@@ -954,6 +1052,7 @@
       }
       case 'retry': route(); break;
       case 'map': FM.ui.map = !FM.ui.map; render(); break;
+      case 'top-retry': FM.topNear = null; FM.topNearFailed = false; render(); break;
       case 'more': FM.ui.shown = (FM.ui.shown || 30) + 30; { const y = window.scrollY; render(); window.scrollTo(0, y); } break;
       case 'full-menu': FM.ui.fullMenu = FM.ui.fullMenu === el.getAttribute('data-id') ? null : el.getAttribute('data-id'); { const y = window.scrollY; render(); window.scrollTo(0, y); } break;
       case 'cmp-add': {

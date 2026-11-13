@@ -19,5 +19,5 @@ export async function onRequestGet({ request, env }) {
   }
   if (fresh && p.menuStatus && p.menuStatus !== 'failed') return json({ status: p.menuStatus, items: [], checkedAt: p.menuAt });
   const res = await readAndSave(env, p);
-  return json({ status: res.status, source: res.source || '', items: res.items || [], description: res.description || '', checkedAt: Date.now(), complete: (res.items || []).length >= 12 });
+  return json({ status: res.status, source: res.source || '', items: res.items || [], description: res.description || '', image: res.image || '', checkedAt: Date.now(), complete: (res.items || []).length >= 12 });
 }

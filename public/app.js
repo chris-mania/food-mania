@@ -5,7 +5,7 @@
   const $app = document.getElementById('app');
   const DEFAULT_ORIGIN = { name: 'Paramus, NJ', lat: 40.9445, lng: -74.0754 };
   const FEATURE_PHRASE = { tvs: 'tvs', drinks: 'drinks', kids: 'kid friendly', view: 'view', rooftop: 'rooftop', outdoor: 'outdoor seating',
-    romantic: 'date night', quiet: 'quiet', liveMusic: 'live music', reservable: 'reservations', cheap: 'cheap', fancy: 'fancy', openNow: 'open now', late: 'late night' };
+    romantic: 'date night', quiet: 'quiet', liveMusic: 'live music', reservable: 'reservations', cheap: 'cheap', fancy: 'fancy', openNow: 'open now', late: 'late night', vegan: 'vegan', vegetarian: 'vegetarian', glutenFree: 'gluten free', wheelchair: 'wheelchair accessible', driveThru: 'drive thru', takeaway: 'takeout', delivery: 'delivery' };
   const STATE_TEXT = { yes: 'yes', reviews: 'per reviews', likely: 'likely', unknown: 'not sure', no: 'no' };
   const LABELS = {
     menu: ['On the menu', 'b-menu'], specialty: ['Their specialty', 'b-menu'], reviews: ['In reviews', 'b-reviews'], closest: ['Closest match', 'b-likely'],
@@ -42,8 +42,8 @@
       apple: 'https://maps.apple.com/?daddr=' + p.lat + ',' + p.lng + '&q=' + encodeURIComponent(p.name),
       google: 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(p.lat + ',' + p.lng) + (p.googleId ? '&destination_place_id=' + p.googleId : ''),
       googlePlace: p.googleMapsUri || ('https://www.google.com/maps/search/?api=1&query=' + q + (p.googleId ? '&query_place_id=' + p.googleId : '')),
-      yelp: 'https://www.yelp.com/search?find_desc=' + encodeURIComponent(p.name) + '&find_loc=' + encodeURIComponent(p.address || (p.lat + ',' + p.lng)),
-      tripadvisor: p.tripadvisorUrl || ('https://www.tripadvisor.com/Search?q=' + q),
+      yelp: (p.wiki && p.wiki.yelp) || 'https://www.yelp.com/search?find_desc=' + encodeURIComponent(p.name) + '&find_loc=' + encodeURIComponent(p.address || (p.lat + ',' + p.lng)),
+      tripadvisor: p.tripadvisorUrl || (p.wiki && p.wiki.tripadvisor) || ('https://www.tripadvisor.com/Search?q=' + q),
       menu: p.website || ('https://www.google.com/search?q=' + encodeURIComponent(p.name + ' ' + (p.address || '') + ' menu'))
     };
   }
@@ -269,6 +269,7 @@
     else if (r.name === 'wheel') html += viewWheel();
     html += viewTabs(r.name);
     $app.innerHTML = html;
+    if (r.name === 'results' && FM.ui.map && FM.last && FM.last.result && !FM.loading) drawMap(FM.last.result.rows, (FM.last.data && FM.last.data.origin) || origin());
     if (r.name === 'place') loadPlaceExtras(r.id);
   }
 
@@ -363,7 +364,7 @@
     return '<svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9A0000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + ICONS[k] + '</svg>';
   }
   function photo(p, style) {
-    const url = p.photos && p.photos[0];
+    const url = (p.photos && p.photos[0]) || p.webPhoto || (p.wiki && p.wiki.photo) || '';
     return '<div class="photo" style="' + style + ';background-color:' + (p.tint || '#F6E9E2') + ';display:flex;align-items:center;justify-content:center;overflow:hidden">' + iconFor(p) +
       (url ? '<img src="' + esc(url) + '" alt="" loading="lazy" onerror="this.remove()" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">' : '') + '</div>';
   }
@@ -397,6 +398,7 @@
     const rad = FM.radius >= 999 ? 'Any distance' : 'Within ' + FM.radius + ' min ' + (FM.mode === 'walk' ? 'walk' : 'drive');
     chips.push('<button class="chip outline" data-act="distance">' + I.car + esc(rad) + I.down + '</button>');
     chips.push('<button class="chip dashed" data-act="filters">+ Add filter</button>');
+    chips.push('<button class="chip ' + (FM.ui.map ? '' : 'light') + '" data-act="map" aria-pressed="' + !!FM.ui.map + '">' + (FM.ui.map ? 'List' : 'Map') + '</button>');
     html += '<div class="chips">' + chips.join('') + '</div>';
     if (typoFixed) html += '<div class="small muted">Showing results for <b>' + esc(L.normalize(last.q)) + '</b></div>';
     if (last.special !== 'gems') {
@@ -417,6 +419,10 @@
     if (data.anchorName) notes.unshift('Showing places near ' + data.anchorName + '.');
     if (res.widened) notes.push(res.widened >= 999 ? 'Not much close by, so we looked farther out.' : 'Not much close by, so we looked up to ' + res.widened + ' min away.');
     notes.forEach((n) => { html += '<div class="notice">' + esc(n) + '</div>'; });
+    if (parsed.features.some((f) => ['romantic', 'view', 'rooftop', 'outdoor'].includes(f.key))) {
+      const o = (data.origin || origin()); const ss = sunsetToday(o.lat, o.lng);
+      if (ss && ss > new Date()) html += '<div class="notice">Sunset today is at <b style="color:var(--ink)">' + ss.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + '</b>. View and rooftop spots are best before then.</div>';
+    }
     if (last.games && last.games.length) html += '<div class="notice"><b style="color:var(--ink)">Games today:</b> ' + last.games.map((g) => esc(g.name)).join(' · ') + '</div>';
     const count = res.rows.length;
     if (parsed.items.length && count && res.rows.every((r) => r.items.every((i) => i.label === 'unconfirmed'))) {
@@ -428,7 +434,9 @@
       html += '<div class="empty"><div class="display" style="font-size:20px;color:var(--ink)">Nothing matched all of that</div><p>Try removing a filter above, or widen the distance.</p>' +
         '<button class="big-btn light" data-act="distance">Change distance</button></div>';
     }
-    if (res.groups) {
+    if (FM.ui.map && count) {
+      html += '<div id="map" style="height:62vh;min-height:360px;border-radius:16px;overflow:hidden;border:1px solid var(--line)"></div>';
+    } else if (res.groups) {
       if (!res.groups[0].rows.length && count) html += '<div class="notice warn">No place nearby has all ' + parsed.items.length + '. Here are the best with some of them.</div>';
       res.groups.forEach((g) => { if (g.rows.length) html += '<div class="group-h">' + esc(g.title) + '</div><div class="grid-results col gap12">' + g.rows.map(card).join('') + '</div>'; });
     } else {
@@ -444,6 +452,7 @@
       html += '<button class="big-btn light" data-act="toggle-ruled">' + (FM.ui.showRuled ? 'Hide' : 'Show') + ' ' + res.ruledOut.length + ' we ruled out</button>';
       if (FM.ui.showRuled) html += '<div class="grid-results col gap12">' + res.ruledOut.map(card).join('') + '</div>';
     }
+    html += '<div class="tiny muted" style="text-align:center;margin-top:6px">Places © OpenStreetMap contributors · Breweries: Open Brewery DB · Notable spots: Wikidata · Drive times: OSRM</div>';
     html += '<div style="height:70px"></div></div>';
     if (FM.compare.length >= 2) html += '<div class="sticky-bottom"><div><a class="big-btn dark" style="flex:1" href="#/c">' + I.cmp + 'Compare ' + FM.compare.length + ' places</a></div></div>';
     return html;
@@ -468,7 +477,7 @@
     const links = dirLinks(p);
     return '<div class="card"><a href="#/p/' + encodeURIComponent(p.id) + '" class="result-main" style="color:inherit">' + photo(p, '') +
       '<div class="col gap6" style="flex:1;min-width:0"><div class="row between gap6" style="align-items:flex-start"><b style="font-size:16px;line-height:1.2">' + esc(p.name) + '</b>' +
-      (r.gem && r.gem >= 70 ? '<span class="badge b-gem">Gem ' + r.gem + '</span>' : '') + '</div>' +
+      '<span class="row gap6" style="flex-wrap:wrap;justify-content:flex-end">' + badges(p) + (r.gem && r.gem >= 70 ? '<span class="badge b-gem">Gem ' + r.gem + '</span>' : '') + '</span></div>' +
       '<div class="small muted">' + scoreText(r) + '</div><div class="small muted">' + esc(meta) + '</div>' +
       '<div class="tiny bold ' + r.open.cls + '">' + esc(r.open.label) + '</div></div></a>' +
       (matches ? '<div class="match">' + matches + '</div>' : '') +
@@ -488,7 +497,7 @@
     const r = res.rows.find((x) => x.place.id === id) || res.rows[0];
     const tr = L.typeRank(r, res.rows);
     const links = dirLinks(p);
-    const ph = p.photos || [];
+    const ph = (p.photos || []).concat(p.webPhoto ? [p.webPhoto] : [], p.wiki && p.wiki.photo ? [p.wiki.photo] : []).slice(0, 3);
     const hero = !ph.length ? '<div class="place-hero">' + photo(p, 'flex:1;height:220px') + '<a class="icon-btn solid back" href="javascript:history.back()" aria-label="Back">' + I.back + '</a></div>' : '<div class="place-hero">' + '<div class="photo" style="flex:2;background-color:' + (p.tint || '#EED7C8') + (ph[0] ? ';background-image:url(\'' + esc(ph[0]) + '\')' : '') + '"></div>' +
       '<div class="side"><div class="photo" style="background-color:#E7CDBB' + (ph[1] ? ';background-image:url(\'' + esc(ph[1]) + '\')' : '') + '"></div>' +
       '<a class="photo" href="' + esc(links.googlePlace) + '" target="_blank" rel="noopener" style="background-color:#E2C6B2;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#4A3A2E' + (ph[2] ? ';background-image:url(\'' + esc(ph[2]) + '\')' : '') + '">' + (ph[2] ? '' : 'More photos') + '</a></div>' +
@@ -528,6 +537,9 @@
     }
     const tips = FM.extras['tips-' + id];
     if (tips && tips.length) html += '<h2 class="sec" style="font-size:18px">Tips from Foursquare</h2><div class="list-card">' + tips.slice(0, 3).map((t) => '<div><span class="small">' + esc(t) + '</span></div>').join('') + '</div>';
+    const w = p.wiki || {};
+    if (badges(p)) html += '<div class="row gap6" style="flex-wrap:wrap">' + badges(p) + '</div>';
+    if (w.description || w.article) html += '<div class="notice" style="color:var(--ink)">' + esc(w.description ? w.description[0].toUpperCase() + w.description.slice(1) + '.' : '') + (w.awards && w.awards.length ? ' Awards: ' + esc(w.awards.join(', ')) + '.' : '') + (w.article ? ' <a href="' + esc(w.article) + '" target="_blank" rel="noopener">Read on Wikipedia</a>' : '') + '</div>';
     if (p.description) html += '<div class="small muted" style="line-height:1.45">' + esc(p.description) + '</div>';
     const ms = FM.extras['menu-' + id];
     if (p.menu && p.menu.length) {
@@ -571,6 +583,70 @@
     if (!jobs.length) return;
     await Promise.allSettled(jobs);
     const r = currentRoute(); if (r.name === 'place' && r.id === id) { const y = window.scrollY; render(); window.scrollTo(0, y); }
+  }
+
+  // ---------- map view (MapLibre + OpenFreeMap: free, no key) ----------
+  let mapLib = null;
+  function loadMapLib() {
+    if (mapLib) return mapLib;
+    mapLib = new Promise((resolve, reject) => {
+      const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css'; document.head.appendChild(css);
+      const s = document.createElement('script'); s.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js';
+      s.onload = () => resolve(window.maplibregl); s.onerror = () => { mapLib = null; reject(new Error('map')); };
+      document.head.appendChild(s);
+    });
+    return mapLib;
+  }
+  async function drawMap(rows, center) {
+    const el = document.getElementById('map'); if (!el) return;
+    try {
+      const ml = await loadMapLib();
+      const map = new ml.Map({ container: el, style: 'https://tiles.openfreemap.org/styles/liberty', center: [center.lng, center.lat], zoom: 12, attributionControl: { compact: true } });
+      map.addControl(new ml.NavigationControl({ showCompass: false }), 'top-right');
+      const you = document.createElement('div'); you.style.cssText = 'width:16px;height:16px;border-radius:8px;background:#1F5FBF;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)';
+      new ml.Marker({ element: you }).setLngLat([center.lng, center.lat]).addTo(map);
+      const bounds = new ml.LngLatBounds([center.lng, center.lat], [center.lng, center.lat]);
+      rows.slice(0, 60).forEach((r, i) => {
+        const p = r.place;
+        const pin = document.createElement('div');
+        pin.style.cssText = 'min-width:26px;height:26px;padding:0 6px;border-radius:13px;background:' + (i < 10 ? '#C80000' : '#17130F') + ';color:#fff;font:700 12px Inter,sans-serif;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer';
+        pin.textContent = r.score.count ? r.score.score.toFixed(1) : String(i + 1);
+        const pop = new ml.Popup({ offset: 16, closeButton: false }).setHTML('<a href="#/p/' + encodeURIComponent(p.id) + '" style="font:600 14px Inter,sans-serif;color:#17130F">' + esc(p.name) + '</a><div style="font:12px Inter,sans-serif;color:#5E554C">' + esc([p.cuisine, r.minutes + ' min'].filter(Boolean).join(' · ')) + '</div>');
+        new ml.Marker({ element: pin }).setLngLat([p.lng, p.lat]).setPopup(pop).addTo(map);
+        bounds.extend([p.lng, p.lat]);
+      });
+      if (rows.length) map.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 0 });
+    } catch (e) {
+      el.innerHTML = '<div class="empty">The map couldn’t load right now.</div>';
+    }
+  }
+
+  // Sunset time (standard NOAA formula), for Date Night and view searches
+  function sunsetToday(lat, lng) {
+    const now = new Date(); const start = new Date(now.getFullYear(), 0, 0);
+    const N = Math.floor((now - start) / 86400000); const rad = Math.PI / 180;
+    const lngHour = lng / 15; const t = N + ((18 - lngHour) / 24);
+    const M = 0.9856 * t - 3.289;
+    let Lo = M + 1.916 * Math.sin(M * rad) + 0.020 * Math.sin(2 * M * rad) + 282.634; Lo = (Lo + 360) % 360;
+    let RA = Math.atan(0.91764 * Math.tan(Lo * rad)) / rad; RA = (RA + 360) % 360;
+    RA = (RA + (Math.floor(Lo / 90) * 90 - Math.floor(RA / 90) * 90)) / 15;
+    const sinDec = 0.39782 * Math.sin(Lo * rad); const cosDec = Math.cos(Math.asin(sinDec));
+    const cosH = (Math.cos(90.833 * rad) - sinDec * Math.sin(lat * rad)) / (cosDec * Math.cos(lat * rad));
+    if (cosH < -1 || cosH > 1) return null;
+    const H = Math.acos(cosH) / rad / 15;
+    const UT = ((H + RA - 0.06571 * t - 6.622 - lngHour) % 24 + 24) % 24;
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0) + UT * 3600000);
+    if (d.getUTCDate() !== now.getUTCDate() && UT < 12) d.setUTCDate(d.getUTCDate() + 1);
+    return d;
+  }
+
+  function badges(p) {
+    const w = p.wiki || {}; const out = [];
+    if (w.michelin || (p.features && p.features.michelin)) out.push('<span class="badge" style="color:#fff;background:#C80000">Michelin</span>');
+    if (w.awards && w.awards.some((a) => /james beard/i.test(a))) out.push('<span class="badge b-gem">James Beard</span>');
+    if (w.article && !w.michelin) out.push('<span class="badge b-reviews">Famous spot</span>');
+    if (w.since && new Date().getFullYear() - w.since >= 25) out.push('<span class="badge b-unconfirmed">Since ' + w.since + '</span>');
+    return out.join('');
   }
 
   // ---------- compare ----------
@@ -619,6 +695,7 @@
         FM.extras['menu-' + id] = 'ok';
       } else FM.extras['menu-' + id] = d.status || 'none';
       if (d.description && !p.description) p.description = d.description;
+      if (d.image && !p.webPhoto) p.webPhoto = d.image;
     } catch (e) { FM.extras['menu-' + id] = 'failed'; }
     const r = currentRoute();
     if ((r.name === 'place' && r.id === id) || r.name === 'compare') { const y = window.scrollY; render(); window.scrollTo(0, y); }
@@ -807,7 +884,7 @@
   function sheetFilters() {
     const parsed = FM.last && FM.last.parsed; if (!parsed) return;
     const have = new Set(parsed.features.map((f) => f.key));
-    const all = [['openNow', 'Open now'], ['late', 'Open late'], ['cheap', 'Inexpensive'], ['fancy', 'Go big'], ['kids', 'Kid-friendly'], ['tvs', 'TVs'], ['drinks', 'Drinks'], ['outdoor', 'Outdoor seating'], ['view', 'Nice view'], ['romantic', 'Date night'], ['reservable', 'Takes reservations']];
+    const all = [['openNow', 'Open now'], ['late', 'Open late'], ['cheap', 'Inexpensive'], ['fancy', 'Go big'], ['kids', 'Kid-friendly'], ['tvs', 'TVs'], ['drinks', 'Drinks'], ['outdoor', 'Outdoor seating'], ['view', 'Nice view'], ['romantic', 'Date night'], ['reservable', 'Takes reservations'], ['vegan', 'Vegan options'], ['vegetarian', 'Vegetarian'], ['glutenFree', 'Gluten-free'], ['wheelchair', 'Wheelchair accessible'], ['driveThru', 'Drive-thru'], ['takeaway', 'Takeout'], ['delivery', 'Delivery']];
     openSheet('<div class="display" style="font-size:20px">Add a filter</div><div class="opt-grid">' + all.map((a) => '<button class="opt' + (have.has(a[0]) ? ' on' : '') + '" data-act="toggle-feat" data-v="' + a[0] + '" data-l="' + esc(a[1]) + '">' + a[1] + '</button>').join('') + '</div>' +
       '<form class="col gap8" data-form="add-item"><label for="additem" class="small bold">Add another food</label><input id="additem" class="text" placeholder="Fried pickles, vanilla latte…"><button class="big-btn dark" type="submit">Add food</button></form><button class="big-btn light" data-act="close">Done</button>');
   }
@@ -876,6 +953,7 @@
         closeSheet(); go(searchHash(rebuildQuery(parsed))); break;
       }
       case 'retry': route(); break;
+      case 'map': FM.ui.map = !FM.ui.map; render(); break;
       case 'more': FM.ui.shown = (FM.ui.shown || 30) + 30; { const y = window.scrollY; render(); window.scrollTo(0, y); } break;
       case 'full-menu': FM.ui.fullMenu = FM.ui.fullMenu === el.getAttribute('data-id') ? null : el.getAttribute('data-id'); { const y = window.scrollY; render(); window.scrollTo(0, y); } break;
       case 'cmp-add': {

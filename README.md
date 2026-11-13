@@ -32,7 +32,10 @@ Add these in Cloudflare: **Workers & Pages → food-mania → Settings → Varia
 | `THESPORTSDB_KEY` | TheSportsDB | "Games today" on sports bar searches | No |
 | `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile | Blocks bots from burning the free quota | No |
 | (built in) | Cloudflare Workers AI | Review summaries | Set in `wrangler.toml` |
-| (no key) | OpenStreetMap, Nager.Date, Open-Meteo | Extra places, holiday warnings, rain tips | — |
+| (no key) | OpenStreetMap, Open Brewery DB, Wikidata | Every food place, breweries, Michelin stars, famous spots, opening years | — |
+| (no key) | Jina Reader | Reads PDF menus and JavaScript-heavy menu pages (20 a minute, capped at `READER_DAILY`, default 300 a day) | — |
+| (no key) | OSRM, OpenFreeMap + MapLibre | Backup drive times, the map view | — |
+| (no key) | Nager.Date, Open-Meteo | Holiday warnings, rain tips | — |
 
 **Keep Google at $0:** in Google Cloud → APIs & Services → Places API (New) → Quotas, set *Text Search* requests per day to about 150. Google stops at the cap instead of charging.
 

@@ -71,6 +71,13 @@
     [/\breservations?\b|\breserve\b|\bbook a table\b/, 'reservable', 'Takes reservations'],
     [/\bcheap\b|\binexpensive\b|\bbudget\b|\baffordable\b|\bnot expensive\b/, 'cheap', 'Inexpensive'],
     [/\bfancy\b|\bexpensive\b|\bupscale\b|\bgo big\b|\bnice dinner\b/, 'fancy', 'Go big'],
+    [/\bvegan\b/, 'vegan', 'Vegan options'],
+    [/\bvegetarian\b|\bveggie\b/, 'vegetarian', 'Vegetarian options'],
+    [/\bgluten[ -]?free\b|\bceliac\b/, 'glutenFree', 'Gluten-free options'],
+    [/\bwheelchair\b|\baccessible\b/, 'wheelchair', 'Wheelchair accessible'],
+    [/\bdrive[ -]?(thru|through)\b/, 'driveThru', 'Drive-thru'],
+    [/\btake ?out\b|\bto go\b|\bpick ?up\b/, 'takeaway', 'Takeout'],
+    [/\bdelivery\b|\bdeliver\b/, 'delivery', 'Delivery'],
     [/\bopen now\b|\bright now\b|\bopen\b/, 'openNow', 'Open now'],
     [/\blate night\b|\blate\b|\bafter midnight\b|\b24 ?(hours|hr|\/7)\b/, 'late', 'Open late']
   ];
@@ -232,7 +239,9 @@
     tvs: ['tvs', 'tv', 'screens', 'football', 'the game', 'games on'], drinks: ['beer', 'cocktail', 'drinks', 'bar', 'wine'],
     kids: ['kids', 'kid', 'family', 'children'], view: ['view', 'views', 'skyline', 'waterfront', 'scenic'], rooftop: ['rooftop', 'balcony', 'terrace'],
     outdoor: ['outdoor', 'patio', 'outside'], romantic: ['date', 'romantic', 'candlelit', 'anniversary'], quiet: ['quiet', 'cozy', 'calm'],
-    liveMusic: ['live music', 'band'], reservable: ['reservation', 'book']
+    liveMusic: ['live music', 'band'], reservable: ['reservation', 'book'], vegan: ['vegan'], vegetarian: ['vegetarian', 'veggie'],
+    glutenFree: ['gluten free', 'gluten-free', 'celiac'], wheelchair: ['wheelchair', 'accessible'], driveThru: ['drive thru', 'drive-thru', 'drive through'],
+    takeaway: ['takeout', 'take out', 'to go'], delivery: ['delivery', 'delivers']
   };
 
   function checkFeature(key, place, now) {

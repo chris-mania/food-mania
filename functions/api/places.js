@@ -1,6 +1,6 @@
 import { json, bad, num, googleTextSearch, normalizeGoogle, kmBetween, similarName } from '../../lib/fm.js';
 import { ensureSchema, cellsFor, box, missingCells, markCells, placesInBox, menusFor, upsertStatements, useBudget, budgetLeft, DAY_MS } from '../../lib/db.js';
-import { overpassBox } from '../../lib/osm.js';
+import { overpassBox, breweriesNear, notableNear } from '../../lib/osm.js';
 import { CHAIN_MENUS, chainKey } from '../../lib/chains.js';
 import { readAndSave } from '../../lib/menu.js';
 
@@ -35,7 +35,18 @@ export async function onRequestPost(ctx) {
         const old = byOsm.get(p.osmId);
         if (!old) return p;
         // keep Google data already learned for this place
-        return Object.assign({}, p, pick(old, ['sources', 'reviews', 'photos', 'priceLevel', 'priceRange', 'googleMapsUri', 'googleId', 'description']), { id: old.id, googleAt: old.googleAt, hours: old.googleAt ? old.hours : p.hours, website: p.website || old.website });
+        return Object.assign({}, p, pick(old, ['sources', 'reviews', 'photos', 'priceLevel', 'priceRange', 'googleMapsUri', 'googleId', 'description', 'webPhoto', 'wiki']), { id: old.id, googleAt: old.googleAt, hours: old.googleAt ? old.hours : p.hours, website: p.website || old.website });
+      });
+      // breweries and Michelin stars, free extras, matched onto the same places
+      const [brews, notable] = await Promise.all([breweriesNear(lat, lng).catch(() => []), notableNear(lat, lng, Math.ceil(loadKm)).catch(() => [])]);
+      brews.forEach((b) => {
+        const same = fresh.find((p) => kmBetween(p, b) < 0.15 && similarName(p.name, b.name));
+        if (same) { same.types = [...new Set([...(same.types || []), 'brewery'])]; if (!same.website) same.website = b.website; }
+        else if (kmBetween({ lat, lng }, b) <= loadKm) fresh.push(b);
+      });
+      notable.forEach((m) => {
+        const same = fresh.find((p) => kmBetween(p, m) < 0.25 && similarName(p.name, m.name)) || existing.find((p) => kmBetween(p, m) < 0.25 && similarName(p.name, m.name));
+        if (same) { same.wiki = m.wiki; if (!fresh.includes(same)) fresh.push(same); }
       });
       for (let i = 0; i < fresh.length; i += 80) await db.batch(upsertStatements(db, fresh.slice(i, i + 80), (p) => chainKey(p.brand || p.name)));
       await markCells(db, missing);
@@ -70,7 +81,7 @@ export async function onRequestPost(ctx) {
   const menus = await menusFor(db, all.filter((p) => p.menuStatus === 'ok').map((p) => p.id));
   all.forEach((p) => {
     const chain = chainKey(p.brand || p.name);
-    p.chain = !!chain;
+    p.chain = !!chain || !!p.brand; // OpenStreetMap tags chain locations with their brand
     if (menus[p.id] && menus[p.id].length) { p.menu = menus[p.id]; p.menuComplete = menus[p.id].length >= 12; p.menuSource = 'website'; }
     else if (chain) { p.menu = CHAIN_MENUS[chain].map((n) => ({ name: n, price: 0 })); p.menuComplete = true; p.chainMenu = true; p.menuSource = 'chain'; }
     else p.menu = [];
@@ -79,7 +90,7 @@ export async function onRequestPost(ctx) {
 
   // 4) Read a few unread menus in the background, most relevant first
   const relevant = (p) => words.reduce((s, w) => s + ((p.name + ' ' + (p.types || []).join(' ') + ' ' + (p.cuisine || '')).toLowerCase().includes(w) ? 1 : 0), 0);
-  const toRead = all.filter((p) => p.website && !p.chain && (!p.menuStatus || (p.menuAt && Date.now() - p.menuAt > 90 * DAY_MS && p.menuStatus !== 'blocked')))
+  const toRead = all.filter((p) => p.website && !chainKey(p.brand || p.name) && (!p.menuStatus || (p.menuAt && Date.now() - p.menuAt > 90 * DAY_MS && p.menuStatus !== 'blocked')))
     .sort((a, b) => relevant(b) - relevant(a) || ((b.sources && b.sources.google ? b.sources.google.count : 0) - (a.sources && a.sources.google ? a.sources.google.count : 0)))
     .slice(0, 3);
   if (toRead.length) ctx.waitUntil(Promise.all(toRead.map((p) => readAndSave(env, p))));

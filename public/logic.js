@@ -25,6 +25,7 @@
     let t = ' ' + String(text || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' &,+-]/g, ' ') + ' ';
     t = t.replace(/\s+/g, ' ');
     t = t.split(' ').map((w) => (TYPOS[w] !== undefined ? TYPOS[w] : w)).join(' ');
+    t = t.replace(/\bice (coffee|latte|tea|mocha|matcha|chai|americano|macchiato|cappuccino)\b/g, 'iced $1');
     return t.replace(/\s+/g, ' ').trim();
   }
 
@@ -142,7 +143,7 @@
   const FAMILY_ONLY = { chicken: ['chicken', 'wing', 'tender', 'nugget', 'francese', 'marsala', 'piccata'] };
   const LIKELY = {
     wing: ['sports bar', 'bar', 'pizza', 'chicken'], pickle: ['sports bar', 'bar', 'chicken'],
-    noodle: ['hibachi', 'japanese', 'chinese', 'thai', 'vietnamese', 'ramen'], coffee: ['cafe', 'coffee shop', 'bakery', 'diner'],
+    noodle: ['hibachi', 'japanese', 'chinese', 'thai', 'vietnamese', 'ramen'], coffee: ['cafe', 'coffee shop', 'coffee', 'diner', 'donut'],
     latte: ['cafe', 'coffee shop'], sandwich: ['fast food', 'chicken', 'diner', 'deli'], chicken: ['chicken', 'diner', 'american', 'fast food', 'sports bar'],
     taco: ['mexican'], burrito: ['mexican'], quesadilla: ['mexican'], pizza: ['pizza'], 'ice cream': ['ice cream', 'dessert'],
     burger: ['diner', 'american', 'sports bar', 'bar', 'fast food'], cheese: ['italian', 'pizza', 'diner'], francese: ['italian', 'diner'],
@@ -208,9 +209,15 @@
     }
     if (false) return { label: 'menu', rank: 4, text: best.name, price: best.price || 0, mentions: mentions.length, positive: positive.length, quote: quote, chainMenu: !!place.chainMenu };
     if (positive.length) return { label: 'reviews', rank: 3, text: quote, mentions: mentions.length, positive: positive.length, quote: quote };
+    // the place itself is known for it: "bagel" at a bagel shop, "pizza" at a pizzeria
+    const kind = place.name + ' ' + (place.cuisine || '') + ' ' + (place.types || []).join(' ');
+    if (scoreText(tokens, kind).full) return { label: 'specialty', rank: 3.5, text: 'It\u2019s what they do', mentions: mentions.length, positive: positive.length, quote: quote };
     if (partial) return { label: 'closest', rank: 2, text: partial.name, price: partial.price || 0, mentions: 0, positive: 0, quote: '' };
+    // a full menu was read and the item isn't on it
+    if (place.menuComplete && (place.menu || []).length) {
+      return { label: 'no', rank: place.chainMenu ? -1 : -2, text: place.chainMenu ? 'Not on their usual menu' : 'Not on their menu', mentions: 0, positive: 0, quote: '' };
+    }
     if (likelyFor(tokens, place)) return { label: 'likely', rank: 1.5, text: '', mentions: 0, positive: 0, quote: '' };
-    if (place.menuComplete && (place.menu || []).length) return { label: 'no', rank: -2, text: '', mentions: 0, positive: 0, quote: '' };
     return { label: 'unconfirmed', rank: 0.3, text: '', mentions: 0, positive: 0, quote: '' };
   }
 
@@ -249,6 +256,8 @@
 
   function typeMatches(type, place) {
     const types = (place.types || []).concat([String(place.cuisine || '').toLowerCase()]);
+    // the free map data often lists sports bars as plain bars or pubs
+    if (type === 'sports bar') return types.some((t) => t.includes('bar') || t.includes('pub'));
     if (type === 'bar') return types.some((t) => t.includes('bar') || t.includes('pub'));
     if (type === 'cafe') return types.some((t) => t.includes('cafe') || t.includes('coffee'));
     return types.some((t) => t.includes(type));
@@ -374,6 +383,7 @@
       const gem = gemScore(p);
       let match = 0;
       items.forEach((i) => { match += i.rank; });
+      if (parsed.types.includes('sports bar') && ((p.types || []).includes('sports bar') || (p.features && p.features.tvs))) match += 1.5;
       feats.forEach((f) => { match += FEATURE_RANK[f.state]; });
       return { place: p, score: s, minutes: minutes, exactMinutes: exact, miles: miles(origin, p), items: items, feats: feats, typeOk: typeOk, open: open, gem: gem, match: match };
     });
@@ -409,7 +419,7 @@
     // groups for multi-item searches
     let groups = null;
     if (parsed.items.length > 1) {
-      const strong = (i) => i.label === 'menu' || i.label === 'reviews';
+      const strong = (i) => i.label === 'menu' || i.label === 'reviews' || i.label === 'specialty';
       const all = rows.filter((r) => r.items.every(strong));
       const some = rows.filter((r) => !all.includes(r) && r.items.some(strong));
       const rest = rows.filter((r) => !all.includes(r) && !some.includes(r) && r.items.some((i) => i.rank >= 1.5));

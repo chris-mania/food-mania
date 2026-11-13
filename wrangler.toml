@@ -5,3 +5,9 @@ compatibility_date = "2025-09-01"
 # Cloudflare Workers AI, used for review summaries ("What people say").
 [ai]
 binding = "AI"
+
+# Food Mania's memory: every place, rating and menu it learns is saved here.
+[[d1_databases]]
+binding = "DB"
+database_name = "food-mania-db"
+database_id = "58fbf9a3-cd86-4e98-8b12-b99323abc863"

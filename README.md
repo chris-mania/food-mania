@@ -13,7 +13,9 @@ It's a website that can be added to a phone's home screen to act like an app. It
 - `functions/api/`: small server pieces that call outside services and keep the keys secret
 - `lib/fm.js`: shared server helpers
 
-With no keys set, the site runs in **demo mode** on the sample data. Add `GOOGLE_PLACES_KEY` and it switches to real places. Every other service is optional. If its key is missing or its free amount runs out, only that feature pauses.
+**Free layer (always on):** every food place from OpenStreetMap, menus read from restaurants' own websites, built-in menus for big chains, and a memory database (Cloudflare D1, set in `wrangler.toml`) that saves everything so repeat searches cost nothing.
+
+**Bonus layer:** Google adds ratings and photos for places not already saved, under a daily cap (`GOOGLE_DAILY_CAP`, default 25 searches; `GOOGLE_PHOTO_DAILY_CAP`, default 30 photos). When the cap is hit, the app keeps working on the free layer and links each place to its reviews. Menu reading by AI has its own daily cap (`AI_MENU_DAILY`, default 80).
 
 ## Services and their settings
 
@@ -21,10 +23,9 @@ Add these in Cloudflare: **Workers & Pages → food-mania → Settings → Varia
 
 | Setting | Service | What it adds | Required |
 | --- | --- | --- | --- |
-| `GOOGLE_PLACES_KEY` | Google Places API (New) | Places, ratings, hours, photos, reviews | Yes, for real places |
+| `GOOGLE_PLACES_KEY` | Google Places API (New) | Ratings, photos, 5 reviews per place | No, but recommended |
 | `TRIPADVISOR_KEY` | Tripadvisor Content API | Second rating in the Food Mania Score | No |
 | `ORS_KEY` | OpenRouteService | Real drive and walk times | No (estimates used) |
-| `SPOONACULAR_KEY` | Spoonacular | Chain restaurant menus | No |
 | `FOURSQUARE_KEY` | Foursquare Places API | Dish tips on place pages | No |
 | `TICKETMASTER_KEY` | Ticketmaster Discovery | "Concert tonight, eat nearby" | No |
 | `USDA_KEY` | USDA FoodData Central | Calories on chain menu items | No |

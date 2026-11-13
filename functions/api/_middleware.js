@@ -4,7 +4,7 @@ import { json } from '../../lib/fm.js';
 export async function onRequest(ctx) {
   const { request, env } = ctx;
   const url = new URL(request.url);
-  if (env.TURNSTILE_SECRET_KEY && request.method === 'POST' && url.pathname === '/api/search') {
+  if (env.TURNSTILE_SECRET_KEY && request.method === 'POST' && url.pathname === '/api/places') {
     const token = request.headers.get('x-turnstile-token');
     if (!token) return json({ error: 'bot-check' }, 403);
     const form = new FormData();

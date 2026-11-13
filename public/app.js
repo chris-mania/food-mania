@@ -8,7 +8,7 @@
     romantic: 'date night', quiet: 'quiet', liveMusic: 'live music', reservable: 'reservations', cheap: 'cheap', fancy: 'fancy', openNow: 'open now', late: 'late night' };
   const STATE_TEXT = { yes: 'yes', reviews: 'per reviews', likely: 'likely', unknown: 'not sure', no: 'no' };
   const LABELS = {
-    menu: ['On the menu', 'b-menu'], reviews: ['In reviews', 'b-reviews'], closest: ['Closest match', 'b-likely'],
+    menu: ['On the menu', 'b-menu'], specialty: ['Their specialty', 'b-menu'], reviews: ['In reviews', 'b-reviews'], closest: ['Closest match', 'b-likely'],
     likely: ['Likely', 'b-likely'], unconfirmed: ['Not confirmed', 'b-unconfirmed'], no: ['Probably not', 'b-no']
   };
 
@@ -69,9 +69,8 @@
 
   // ---------- data ----------
   async function init() {
-    try { FM.status = await api('/api/status'); FM.live = !!FM.status.live; } catch (e) { FM.live = false; }
+    try { FM.status = await api('/api/status'); FM.live = !!FM.status.live; } catch (e) { FM.live = false; FM.status = {}; }
     if (FM.live && FM.status.turnstileSiteKey) setupTurnstile(FM.status.turnstileSiteKey);
-    if (!FM.live) FM.origin = DEFAULT_ORIGIN;
     window.addEventListener('hashchange', route);
     route();
     loadExtras();
@@ -109,83 +108,83 @@
 
   function setPlaces(list) { list.forEach((p) => { FM.placesById[p.id] = p; }); }
 
-  function demoPlaces() { const list = window.FM_SAMPLE.places; setPlaces(list); return list; }
-
+  // Extra searches by place type so the right spots always show up ("ice coffee" also searches coffee shops).
+  const TYPE_FOR = [
+    [/coffee|latte|espresso|cappuccino|frapp|macchiato|cold brew|mocha|americano/, 'coffee shop'], [/\bwings?\b/, 'wings'],
+    [/taco|burrito|quesadilla|nacho|birria|enchilada/, 'mexican restaurant'], [/pizza|slice|calzone/, 'pizza'],
+    [/ice cream|gelato|sundae|milkshake|frozen yogurt|soft serve/, 'ice cream shop'], [/sushi|sashimi|\broll\b/, 'sushi'],
+    [/noodle|ramen|pho|lo mein|udon|pad thai/, 'noodles'], [/burger/, 'burgers'], [/donut|doughnut/, 'donut shop'],
+    [/bagel/, 'bagel shop'], [/boba|bubble tea/, 'bubble tea'], [/hibachi|teriyaki/, 'hibachi'], [/sandwich|sub|hero|hoagie/, 'sandwich shop'],
+    [/chicken/, 'chicken'], [/steak/, 'steakhouse'], [/dessert|cake|cookie|cannoli|brownie/, 'dessert']
+  ];
   function liveQueries(parsed) {
     const type = parsed.types[0] || '';
-    if (parsed.items.length) return parsed.items.map((i) => (i.name + ' ' + type).trim());
-    if (type) return [type];
+    const qs = [];
+    parsed.items.forEach((i) => {
+      qs.push((i.name + ' ' + type).trim());
+      if (!type) { const t = TYPE_FOR.find((x) => x[0].test(i.name)); if (t) qs.push(t[1]); }
+    });
+    if (!parsed.items.length && type) qs.push(type);
     const f = parsed.features.map((x) => x.key);
-    if (f.includes('romantic')) return ['romantic restaurant'];
-    if (f.includes('tvs')) return ['sports bar'];
-    if (f.includes('late')) return ['late night food'];
-    return ['restaurants'];
+    if (!qs.length) {
+      if (f.includes('romantic')) qs.push('romantic restaurant');
+      else if (f.includes('tvs')) qs.push('sports bar');
+      else if (f.includes('late')) qs.push('late night food');
+      else qs.push('restaurants');
+    }
+    return [...new Set(qs)].slice(0, 4);
   }
+  function searchWords(parsed) {
+    const w = [];
+    parsed.items.forEach((i) => L.itemTokens(i.name).forEach((t) => w.push(t)));
+    parsed.types.forEach((t) => w.push(t));
+    return [...new Set(w)].slice(0, 12);
+  }
+  function radiusKm() { return FM.radius >= 999 ? 30 : Math.min(30, Math.max(3, FM.mode === 'walk' ? FM.radius * 0.09 : FM.radius * 0.85)); }
 
-  // Runs the staged load. onStep(i) moves the progress bar.
-  async function fetchPlaces(parsed, onStep, opts) {
+  // The staged load. onStep(i) moves the progress bar.
+  async function fetchPlaces(parsed, onStep) {
     let o = origin(); let anchorName = null;
-    const key = JSON.stringify([parsed.items, parsed.types, parsed.features.map((f) => f.key), parsed.anchor, o.lat.toFixed(3), o.lng.toFixed(3), FM.live, opts && opts.gems]);
+    const key = JSON.stringify([liveQueries(parsed), parsed.anchor, o.lat.toFixed(3), o.lng.toFixed(3), FM.radius, FM.mode]);
     if (FM.cache[key]) return FM.cache[key];
     const notes = [];
-    let places = [];
-    if (!FM.live) {
-      onStep(0); await sleep(450);
-      if (parsed.anchor) notes.push('Looking up "' + parsed.anchor + '" needs the live version, so these are near ' + o.name + '.');
-      places = demoPlaces();
-      onStep(1); await sleep(450); onStep(2); await sleep(400); onStep(3); await sleep(400);
-    } else {
-      onStep(0);
-      if (parsed.anchor) {
-        try {
-          const g = await api('/api/geocode?q=' + encodeURIComponent(parsed.anchor) + '&lat=' + o.lat + '&lng=' + o.lng);
-          if (g && g.lat) { o = { name: g.name, lat: g.lat, lng: g.lng }; anchorName = g.name; }
-          else notes.push('Couldn’t find "' + parsed.anchor + '", so these are near ' + o.name + '.');
-        } catch (e) { notes.push('Couldn’t look up "' + parsed.anchor + '" right now, so these are near ' + o.name + '.'); }
-      }
-      const radiusM = Math.min(50000, Math.round((FM.radius >= 999 ? 40 : Math.max(FM.radius, 25)) * 700));
-      const qs = liveQueries(parsed);
-      const results = await Promise.allSettled(qs.map((q) => api('/api/search', { json: { textQuery: q, lat: o.lat, lng: o.lng, radius: radiusM }, turnstile: true })));
-      const byId = {};
-      results.forEach((r) => { if (r.status === 'fulfilled' && r.value && r.value.places) r.value.places.forEach((p) => { byId[p.id] = byId[p.id] || p; }); });
-      places = Object.values(byId);
-      const failed = results.filter((r) => r.status === 'rejected');
-      if (failed.length === results.length) {
-        const st = failed[0].reason && failed[0].reason.status;
-        throw new Error(st === 429 ? 'limit' : 'search');
-      }
-      places.forEach((p) => { p.chain = L.isChain(p.name); });
-      // extra places from OpenStreetMap when Google found very few
-      if (places.length < 5) {
-        try {
-          const osm = await api('/api/osm?lat=' + o.lat + '&lng=' + o.lng + '&radius=' + radiusM + '&q=' + encodeURIComponent(qs[0]));
-          (osm.places || []).forEach((p) => { if (!places.some((x) => L.km(x, p) < 0.08)) places.push(p); });
-        } catch (e) { /* optional */ }
-      }
-      onStep(1);
+    onStep(0);
+    if (parsed.anchor) {
       try {
-        const top = places.slice().sort((a, b) => (b.sources.google ? b.sources.google.count : 0) - (a.sources.google ? a.sources.google.count : 0)).slice(0, 6);
+        const g = await api('/api/geocode?q=' + encodeURIComponent(parsed.anchor) + '&lat=' + o.lat + '&lng=' + o.lng);
+        if (g && g.lat) { o = { name: g.name, lat: g.lat, lng: g.lng }; anchorName = g.name; }
+        else notes.push('Couldn’t find "' + parsed.anchor + '", so these are near ' + o.name + '.');
+      } catch (e) { notes.push('Couldn’t look up "' + parsed.anchor + '" right now, so these are near ' + o.name + '.'); }
+    }
+    let res;
+    try {
+      res = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: radiusKm(), queries: liveQueries(parsed), words: searchWords(parsed) }, turnstile: true });
+    } catch (e) { throw new Error(e.status === 429 ? 'limit' : 'search'); }
+    const places = res.places || [];
+    (res.notes || []).forEach((n) => notes.push(n));
+    FM.googleLimited = !!res.googleLimited;
+    onStep(1);
+    try {
+      const top = places.filter((p) => p.sources && p.sources.google && !p.sources.tripadvisor).sort((a, b) => b.sources.google.count - a.sources.google.count).slice(0, 6);
+      if (top.length && FM.status.services && FM.status.services.tripadvisor) {
         const ta = await api('/api/tripadvisor', { json: { places: top.map((p) => ({ id: p.id, name: p.name, lat: p.lat, lng: p.lng })) } });
         Object.keys(ta.results || {}).forEach((id) => {
           const p = places.find((x) => x.id === id); const t = ta.results[id];
           if (p && t && t.rating) { p.sources.tripadvisor = { rating: t.rating, count: t.count }; p.tripadvisorUrl = t.url; }
         });
-      } catch (e) { /* optional */ }
-      onStep(2);
-      try {
-        const dm = await api('/api/drive', { json: { origin: { lat: o.lat, lng: o.lng }, mode: FM.mode, places: places.slice(0, 40).map((p) => ({ id: p.id, lat: p.lat, lng: p.lng })) } });
+      }
+    } catch (e) { /* optional */ }
+    onStep(2);
+    try {
+      if (FM.status.services && FM.status.services.routing) {
+        const near = places.slice().sort((a, b) => L.km(o, a) - L.km(o, b)).slice(0, 40);
+        const dm = await api('/api/drive', { json: { origin: { lat: o.lat, lng: o.lng }, mode: FM.mode, places: near.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng })) } });
         FM.driveMinutes = Object.assign(FM.driveMinutes || {}, dm.minutes || {});
-      } catch (e) { /* estimates are used instead */ }
-      onStep(3);
-      try {
-        const chains = [...new Set(places.filter((p) => p.chain).map((p) => p.name))].slice(0, 5);
-        if (chains.length) {
-          const m = await api('/api/menus', { json: { chains: chains } });
-          places.forEach((p) => { const items = m.menus && m.menus[p.name]; if (items && items.length) { p.menu = items; p.chainMenu = true; p.menuComplete = false; } });
-        }
-      } catch (e) { /* optional */ }
-      setPlaces(places);
-    }
+      }
+    } catch (e) { /* estimates are used instead */ }
+    onStep(3);
+    if (res.readingMenus) notes.push('Reading ' + res.readingMenus + ' more menu' + (res.readingMenus === 1 ? '' : 's') + ' from restaurant websites. Results get sharper every search.');
+    setPlaces(places);
     const out = { places: places, origin: o, anchorName: anchorName, notes: notes };
     FM.cache[key] = out;
     return out;
@@ -223,17 +222,17 @@
     const seq = ++searchSeq;
     let parsed = L.parseQuery(q);
     if (special === 'hungry') { parsed.features.push({ key: 'openNow', label: 'Open now' }); }
-    FM.ui.showOthers = false; FM.ui.showRuled = false;
+    FM.ui.showOthers = false; FM.ui.showRuled = false; FM.ui.shown = 30;
     FM.loading = { step: 0, q: q, special: special };
     FM.last = { q: q, parsed: parsed, special: special, result: null, error: null };
     render();
     try {
-      const data = await fetchPlaces(parsed, (i) => { if (seq === searchSeq && FM.loading) { FM.loading.step = i; renderProgressOnly(); } }, { gems: special === 'gems' });
+      const data = await fetchPlaces(parsed, (i) => { if (seq === searchSeq && FM.loading) { FM.loading.step = i; renderProgressOnly(); } });
       if (seq !== searchSeq) return;
       FM.loading.step = 4; renderProgressOnly(); await sleep(250);
       const radius = special === 'hungry' ? Math.min(FM.radius, 10) : FM.radius;
       const res = L.rank(data.places, parsed, { origin: data.origin, now: new Date(), radius: radius, fixedRadius: params.get('fixed') === '1', mode: FM.mode,
-        sort: special === 'gems' ? 'gems' : FM.sort, gemsOnly: special === 'gems', driveMinutes: FM.live ? FM.driveMinutes : null, minGood: special === 'gems' ? 1 : FM.live ? 6 : 3 });
+        sort: special === 'gems' ? 'gems' : FM.sort, gemsOnly: special === 'gems', driveMinutes: FM.driveMinutes, minGood: special === 'gems' ? 1 : 6 });
       FM.last.result = res; FM.last.data = data;
       if (FM.live && (parsed.types.includes('sports bar') || parsed.features.some((f) => f.key === 'tvs'))) {
         try { const g = await api('/api/games'); FM.last.games = (g.games || []).slice(0, 3); } catch (e) { /* optional */ }
@@ -262,7 +261,7 @@
   function render() {
     const r = currentRoute();
     let html = '';
-    if (!FM.live) html += '<div class="demo-banner">Demo mode: sample places around Paramus. Real places turn on once the Google connection is set up.</div>';
+    if (!FM.live) html += '<div class="demo-banner">Can\u2019t reach Food Mania\u2019s server right now. Check your connection and refresh.</div>';
     if (r.name === 'home') html += viewHome();
     else if (r.name === 'results') html += viewResults();
     else if (r.name === 'place') html += viewPlace(r.id);
@@ -310,11 +309,11 @@
   }
 
   function viewTopNear() {
-    if (FM.live && !FM.topNear) { loadTopNear(); return '<div class="pad" style="margin-top:22px"><h2 class="sec">Top near you</h2><div class="shim" style="height:120px;margin-top:12px;border-radius:16px"></div></div>'; }
-    const places = FM.live ? FM.topNear : demoPlaces();
-    if (!places || !places.length) return '';
-    const res = L.rank(places, L.parseQuery(''), { origin: origin(), now: new Date(), radius: 15, mode: FM.mode, sort: 'score', driveMinutes: FM.driveMinutes, minGood: 3 });
-    const rows = res.rows.slice(0, 6);
+    if (!FM.live) return '';
+    if (!FM.topNear) { loadTopNear(); return '<div class="pad" style="margin-top:22px"><h2 class="sec">Top near you</h2><div class="shim" style="height:120px;margin-top:12px;border-radius:16px"></div></div>'; }
+    const res = L.rank(FM.topNear, L.parseQuery(''), { origin: origin(), now: new Date(), radius: 15, mode: FM.mode, sort: 'score', driveMinutes: FM.driveMinutes, minGood: 3 });
+    const rows = res.rows.filter((r) => r.score.count >= 20).slice(0, 8);
+    if (!rows.length) return '';
     return '<div class="pad" style="margin-top:22px"><div class="row between"><h2 class="sec">Top near you</h2><a class="small bold" href="' + searchHash('restaurants') + '">See all</a></div>' +
       '<div class="scroller" style="gap:12px;margin-top:12px">' + rows.map((r) => {
         const p = r.place;
@@ -326,21 +325,47 @@
   let topLoading = false;
   async function loadTopNear() {
     if (topLoading) return; topLoading = true;
-    const o = origin(); const k = 'fm-top-' + o.lat.toFixed(2) + ',' + o.lng.toFixed(2);
+    const o = origin(); const k = 'fm-top2-' + o.lat.toFixed(2) + ',' + o.lng.toFixed(2);
     const saved = load(k);
     if (saved && Date.now() - saved.t < 6 * 3600 * 1000) { FM.topNear = saved.places; setPlaces(saved.places); }
     else {
-      try { const d = await api('/api/search', { json: { textQuery: 'restaurants', lat: o.lat, lng: o.lng, radius: 12000 }, turnstile: true }); FM.topNear = d.places || []; setPlaces(FM.topNear); save(k, { t: Date.now(), places: FM.topNear }); }
-      catch (e) { FM.topNear = []; }
+      try {
+        const d = await api('/api/places', { json: { lat: o.lat, lng: o.lng, radiusKm: 12, queries: ['restaurants'], words: [] }, turnstile: true });
+        FM.topNear = (d.places || []).filter((p) => p.sources && p.sources.google);
+        setPlaces(d.places || []);
+        save(k, { t: Date.now(), places: FM.topNear.slice(0, 60) });
+      } catch (e) { FM.topNear = []; }
     }
     topLoading = false;
     if (currentRoute().name === 'home') render();
   }
 
-  function photo(p, style, label) {
+  // A food icon that fits the place, shown when there's no photo
+  const ICONS = {
+    coffee: '<path d="M5 10h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/><path d="M16 11h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3c0 1.5 1.5 1.5 1.5 3M12 3c0 1.5 1.5 1.5 1.5 3"/>',
+    pizza: '<path d="M4 6c5-2.5 11-2.5 16 0L12 21z"/><path d="M5.5 9.5c4-1.8 9-1.8 13 0"/><circle cx="11" cy="12" r="1"/><circle cx="13.5" cy="15" r="1"/>',
+    taco: '<path d="M3 17a9 9 0 0 1 18 0z"/><path d="M6 13c1-1 2 0 3-1s2 0 3-1 2 0 3-1 2 0 3 0"/>',
+    burger: '<path d="M4 11a8 6 0 0 1 16 0z"/><path d="M3 14h18"/><path d="M4 17h16v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
+    icecream: '<path d="M8 11l4 10 4-10"/><circle cx="12" cy="8" r="4"/>',
+    drink: '<path d="M6 4h12l-2 16H8z"/><path d="M7 9h10"/>',
+    noodles: '<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M8 11V5M11 11V3M16 3l-3 8"/>',
+    chicken: '<path d="M14 4a5 5 0 0 1 5 5c0 3-3 6-6 6l-3 3"/><path d="M14 4c-3 0-6 3-6 6 0 1 0 2 1 3"/><circle cx="7.5" cy="19.5" r="1.5"/><circle cx="4.5" cy="16.5" r="1.5"/>',
+    sweets: '<path d="M6 11h12l-1.5 9h-9z"/><path d="M6 11a6 5 0 0 1 12 0"/>',
+    sushi: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>',
+    plate: '<path d="M7 3v8a2 2 0 0 0 2 2v8M7 3v5M9 3v5M5 3v5"/><path d="M17 21V3c-2 1-3 4-3 8h3"/>'
+  };
+  function iconFor(p) {
+    const t = ((p.types || []).join(' ') + ' ' + (p.cuisine || '') + ' ' + p.name).toLowerCase();
+    const k = /coffee|cafe|café|tea|donut|bagel/.test(t) ? 'coffee' : /pizza/.test(t) ? 'pizza' : /mexican|taco|burrito/.test(t) ? 'taco'
+      : /burger|diner|american|fast food/.test(t) ? 'burger' : /ice cream|gelato|frozen yogurt/.test(t) ? 'icecream' : /bar|pub|brewery|wine|cocktail/.test(t) ? 'drink'
+      : /ramen|noodle|chinese|thai|vietnam|pho|asian|korean/.test(t) ? 'noodles' : /chicken|wing/.test(t) ? 'chicken' : /bakery|dessert|cookie|cake|pastry|sweet|confection/.test(t) ? 'sweets'
+      : /sushi|japanese|hibachi/.test(t) ? 'sushi' : 'plate';
+    return '<svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9A0000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + ICONS[k] + '</svg>';
+  }
+  function photo(p, style) {
     const url = p.photos && p.photos[0];
-    return '<div class="photo" style="' + style + ';background-color:' + (p.tint || '#EED7C8') + (url ? ';background-image:url(\'' + esc(url) + '\')' : '') + '">' +
-      (url ? '' : '<span class="ph-label">' + (label || 'No photo yet') + '</span>') + '</div>';
+    return '<div class="photo" style="' + style + ';background-color:' + (p.tint || '#F6E9E2') + ';display:flex;align-items:center;justify-content:center;overflow:hidden">' + iconFor(p) +
+      (url ? '<img src="' + esc(url) + '" alt="" loading="lazy" onerror="this.remove()" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">' : '') + '</div>';
   }
   function scoreText(r) {
     if (!r.score.count) return 'No ratings yet';
@@ -348,7 +373,7 @@
   }
   function minutesText(r) { return (r.exactMinutes ? '' : 'about ') + r.minutes + ' min ' + (FM.mode === 'walk' ? 'walk' : 'drive'); }
 
-  const STEPS = ['Finding places near you', 'Checking ratings across Google and Tripadvisor', 'Working out drive times', 'Scanning menus and reviews'];
+  const STEPS = ['Finding every place near you', 'Adding ratings', 'Working out drive times', 'Matching menus and reviews'];
   function viewProgress() {
     const s = FM.loading ? FM.loading.step : 4;
     const pct = [8, 35, 60, 82, 100][s];
@@ -397,7 +422,7 @@
     if (parsed.items.length && count && res.rows.every((r) => r.items.every((i) => i.label === 'unconfirmed'))) {
       html += '<div class="notice warn">We couldn\u2019t find "' + esc(parsed.items.map((i) => i.name).join(', ')) + '" on any menu or review nearby. Check the spelling, or try a broader word. Here are places that might still have it.</div>';
     }
-    const confirmed = res.rows.filter((r) => r.items.length && r.items.every((i) => i.label === 'menu' || i.label === 'reviews')).length;
+    const confirmed = res.rows.filter((r) => r.items.length && r.items.every((i) => i.label === 'menu' || i.label === 'reviews' || i.label === 'specialty')).length;
     html += '<div class="small muted">' + count + ' place' + (count === 1 ? '' : 's') + ' near ' + esc((data.origin || origin()).name) + (parsed.items.length ? ' · ' + confirmed + ' confirmed' : '') + '</div>';
     if (!count) {
       html += '<div class="empty"><div class="display" style="font-size:20px;color:var(--ink)">Nothing matched all of that</div><p>Try removing a filter above, or widen the distance.</p>' +
@@ -407,7 +432,9 @@
       if (!res.groups[0].rows.length && count) html += '<div class="notice warn">No place nearby has all ' + parsed.items.length + '. Here are the best with some of them.</div>';
       res.groups.forEach((g) => { if (g.rows.length) html += '<div class="group-h">' + esc(g.title) + '</div><div class="grid-results col gap12">' + g.rows.map(card).join('') + '</div>'; });
     } else {
-      html += '<div class="grid-results col gap12">' + res.rows.map(card).join('') + '</div>';
+      const shown = res.rows.slice(0, FM.ui.shown || 30);
+      html += '<div class="grid-results col gap12">' + shown.map(card).join('') + '</div>';
+      if (res.rows.length > shown.length) html += '<button class="big-btn light" data-act="more">Show more (' + (res.rows.length - shown.length) + ' left)</button>';
     }
     if (res.others && res.others.length) {
       html += '<button class="big-btn light" data-act="toggle-others">' + (FM.ui.showOthers ? 'Hide' : 'Show') + ' ' + res.others.length + ' more we couldn’t confirm</button>';
@@ -448,20 +475,21 @@
       '<div class="card-actions" style="padding-top:' + (matches ? '0' : '0') + '">' +
       '<button class="mini' + (inCmp ? ' on' : '') + '" data-act="cmp" data-id="' + esc(p.id) + '" aria-pressed="' + inCmp + '">' + (inCmp ? '✓ Comparing' : '+ Compare') + '</button>' +
       '<a class="mini" href="' + esc(isApple() ? links.apple : links.google) + '" target="_blank" rel="noopener">Directions</a>' +
-      (needMenu ? '<a class="mini" href="' + esc(links.menu) + '" target="_blank" rel="noopener">See menu</a>' : '') + '</div></div>';
+      (needMenu ? '<a class="mini" href="' + esc(links.menu) + '" target="_blank" rel="noopener">See menu</a>' : '') +
+      (!r.score.count ? '<a class="mini" href="' + esc(links.googlePlace) + '" target="_blank" rel="noopener">Reviews</a>' : '') + '</div></div>';
   }
 
   function viewPlace(id) {
-    const p = FM.placesById[id] || (window.FM_SAMPLE.places.find((x) => x.id === id));
+    const p = FM.placesById[id];
     if (!p) return '<div class="top"><a class="icon-btn" href="#/" aria-label="Back">' + I.back + '</a></div><div class="empty">This place isn’t loaded anymore. Search again to find it.</div>';
     const now = new Date();
     const all = Object.values(FM.placesById);
-    const res = L.rank(all, L.parseQuery(''), { origin: (FM.last && FM.last.data && FM.last.data.origin) || origin(), now: now, radius: 999, fixedRadius: true, mode: FM.mode, driveMinutes: FM.live ? FM.driveMinutes : null });
+    const res = L.rank(all, L.parseQuery(''), { origin: (FM.last && FM.last.data && FM.last.data.origin) || origin(), now: now, radius: 999, fixedRadius: true, mode: FM.mode, driveMinutes: FM.driveMinutes });
     const r = res.rows.find((x) => x.place.id === id) || res.rows[0];
     const tr = L.typeRank(r, res.rows);
     const links = dirLinks(p);
     const ph = p.photos || [];
-    const hero = '<div class="place-hero">' + '<div class="photo" style="flex:2;background-color:' + (p.tint || '#EED7C8') + (ph[0] ? ';background-image:url(\'' + esc(ph[0]) + '\')' : '') + '"></div>' +
+    const hero = !ph.length ? '<div class="place-hero">' + photo(p, 'flex:1;height:220px') + '<a class="icon-btn solid back" href="javascript:history.back()" aria-label="Back">' + I.back + '</a></div>' : '<div class="place-hero">' + '<div class="photo" style="flex:2;background-color:' + (p.tint || '#EED7C8') + (ph[0] ? ';background-image:url(\'' + esc(ph[0]) + '\')' : '') + '"></div>' +
       '<div class="side"><div class="photo" style="background-color:#E7CDBB' + (ph[1] ? ';background-image:url(\'' + esc(ph[1]) + '\')' : '') + '"></div>' +
       '<a class="photo" href="' + esc(links.googlePlace) + '" target="_blank" rel="noopener" style="background-color:#E2C6B2;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#4A3A2E' + (ph[2] ? ';background-image:url(\'' + esc(ph[2]) + '\')' : '') + '">' + (ph[2] ? '' : 'More photos') + '</a></div>' +
       '<a class="icon-btn solid back" href="javascript:history.back()" aria-label="Back">' + I.back + '</a></div>';
@@ -470,7 +498,7 @@
     let html = hero + '<div class="pad col gap12" style="margin-top:16px">' +
       '<div class="col" style="gap:4px"><h1 class="display" style="margin:0;font-size:26px">' + esc(p.name) + '</h1><div class="small muted">' + esc(meta) + ' · <span class="bold ' + r.open.cls + '">' + esc(r.open.label) + '</span></div></div>' +
       '<div class="row gap10" style="align-items:stretch"><div class="score-box"><div class="tiny bold muted">Food Mania Score</div>' +
-      (r.score.count ? '<div class="row gap6" style="align-items:baseline"><span class="display" style="font-size:28px">' + r.score.score.toFixed(1) + '</span><span class="tiny muted">' + num(r.score.count) + ' ratings</span></div><div class="tiny muted">' + esc(parts) + '</div>' : '<div class="small muted">No ratings yet</div>') + '</div>' +
+      (r.score.count ? '<div class="row gap6" style="align-items:baseline"><span class="display" style="font-size:28px">' + r.score.score.toFixed(1) + '</span><span class="tiny muted">' + num(r.score.count) + ' ratings</span></div><div class="tiny muted">' + esc(parts) + '</div>' : '<div class="small muted">No ratings saved yet</div><div class="tiny">Read reviews on <a href="' + esc(links.googlePlace) + '" target="_blank" rel="noopener">Google</a> · <a href="' + esc(links.yelp) + '" target="_blank" rel="noopener">Yelp</a> · <a href="' + esc(links.tripadvisor) + '" target="_blank" rel="noopener">Tripadvisor</a></div>') + '</div>' +
       (tr && tr.pct ? '<div class="rank-box"><div class="tiny bold">Rank</div><div class="display" style="font-size:22px">Top ' + tr.pct + '%</div><div class="tiny">' + esc(tr.cuisine) + ' spots nearby</div></div>' :
         r.gem && r.gem >= 70 ? '<div class="rank-box" style="background:var(--gem-soft);color:var(--gem)"><div class="tiny bold">Hidden gem</div><div class="display" style="font-size:24px">' + r.gem + '</div><div class="tiny">Gem Score</div></div>' : '') + '</div>' +
       '<div class="actions"><button class="act primary" data-act="directions" data-id="' + esc(p.id) + '">' + I.nav + 'Directions</button>' +
@@ -500,9 +528,20 @@
     }
     const tips = FM.extras['tips-' + id];
     if (tips && tips.length) html += '<h2 class="sec" style="font-size:18px">Tips from Foursquare</h2><div class="list-card">' + tips.slice(0, 3).map((t) => '<div><span class="small">' + esc(t) + '</span></div>').join('') + '</div>';
-    if (p.chainMenu && p.menu && p.menu.length) {
-      html += '<h2 class="sec" style="font-size:18px">Menu (chain-wide)</h2><div class="list-card">' + p.menu.slice(0, 8).map((m, i) => '<div><span class="small">' + esc(m.name) + '</span>' +
-        '<button class="mini" data-act="cal" data-id="' + esc(p.id) + '" data-i="' + i + '">' + (m.calories ? m.calories + ' cal' : 'Calories') + '</button></div>').join('') + '</div>';
+    if (p.description) html += '<div class="small muted" style="line-height:1.45">' + esc(p.description) + '</div>';
+    const ms = FM.extras['menu-' + id];
+    if (p.menu && p.menu.length) {
+      const full = FM.ui.fullMenu === id;
+      const src = p.chainMenu ? 'Usual menu at this chain (locations can differ)' : 'From their website' + (p.menuAt ? ' · checked ' + new Date(p.menuAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '');
+      html += '<div class="row between" style="align-items:baseline"><h2 class="sec" style="font-size:18px">Menu</h2><a class="tiny" href="' + esc(links.menu) + '" target="_blank" rel="noopener">Full menu</a></div>' +
+        '<div class="tiny muted" style="margin-top:-6px">' + esc(src) + '</div><div class="list-card">' + p.menu.slice(0, full ? 150 : 10).map((m, i) => '<div><span class="small">' + esc(m.name) + '</span>' +
+          (m.price ? '<b class="small">' + money(m.price) + '</b>' : p.chainMenu && FM.status.services && FM.status.services.calories ? '<button class="mini" data-act="cal" data-id="' + esc(p.id) + '" data-i="' + i + '">' + (m.calories ? m.calories + ' cal' : 'Calories') + '</button>' : '') + '</div>').join('') + '</div>' +
+        (p.menu.length > 10 ? '<button class="mini" data-act="full-menu" data-id="' + esc(id) + '" style="align-self:flex-start">' + (full ? 'Show less' : 'Show all ' + p.menu.length + ' items') + '</button>' : '');
+    } else if (ms === 'reading') {
+      html += '<h2 class="sec" style="font-size:18px">Menu</h2><div class="notice">Reading their menu from their website…</div>';
+    } else if (p.website || ms) {
+      const why = { none: 'We couldn’t find a menu on their website.', blocked: 'Their website asks apps not to read it.', failed: 'Their website didn’t load.', later: 'Menu reading is paused until tomorrow (free daily limit).', nosite: 'They don’t list a website.' }[ms] || '';
+      html += '<h2 class="sec" style="font-size:18px">Menu</h2><div class="notice">' + esc(why || 'No menu saved yet.') + ' <a href="' + esc(links.menu) + '" target="_blank" rel="noopener">Look up their menu</a></div>';
     }
     if (p.hours && p.hours.length) {
       const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -518,7 +557,8 @@
 
   async function loadPlaceExtras(id) {
     const p = FM.placesById[id];
-    if (!FM.live || !p || p.osm) return;
+    if (!FM.live || !p) return;
+    if (!(p.menu && p.menu.length) && p.website && !FM.extras['menu-' + id]) loadMenu(id);
     const jobs = [];
     if (!FM.extras['ai-' + id] && (p.reviews || []).length >= 2) {
       jobs.push(api('/api/summary', { json: { id: id, name: p.name, reviews: p.reviews.slice(0, 8).map((r) => ({ rating: r.rating, text: r.text })) } })
@@ -534,10 +574,68 @@
   }
 
   // ---------- compare ----------
+  // Menus side by side: each dish lined up with the closest dish at the other places
+  function viewMenuCompare(ps) {
+    const need = ps.filter((p) => !(p.menu && p.menu.length) && p.website && !FM.extras['menu-' + p.id]);
+    if (need.length) need.forEach((p) => loadMenu(p.id));
+    const cols = ps.map((p) => (p.menu || []).slice(0, 60));
+    if (cols.every((c) => !c.length)) {
+      return '<div class="notice">' + (ps.some((p) => FM.extras['menu-' + p.id] === 'reading') ? 'Reading their menus…' : 'No menus saved for these places yet.') + '</div>';
+    }
+    const used = ps.map(() => new Set());
+    const rows = [];
+    const match = (name, list, usedSet) => {
+      const tokens = L.itemTokens(name);
+      let best = -1; let bestHits = 0;
+      list.forEach((m, i) => {
+        if (usedSet.has(i)) return;
+        const s = L.scoreText(tokens, m.name);
+        if (s.headHit && s.hits > bestHits) { best = i; bestHits = s.hits; }
+      });
+      return best;
+    };
+    cols.forEach((col, ci) => col.forEach((m, mi) => {
+      if (used[ci].has(mi)) return;
+      used[ci].add(mi);
+      const row = ps.map(() => null); row[ci] = m;
+      cols.forEach((other, oi) => { if (oi === ci) return; const j = match(m.name, other, used[oi]); if (j >= 0) { used[oi].add(j); row[oi] = other[j]; } });
+      rows.push(row);
+    }));
+    rows.sort((a, b) => b.filter(Boolean).length - a.filter(Boolean).length);
+    const n = ps.length;
+    return '<div class="tiny muted">Dishes are lined up with the closest dish at the other place' + (n > 2 ? 's' : '') + '. Shared dishes come first.</div><div>' +
+      rows.slice(0, 40).map((row) => '<div class="cmp-row"><div class="cmp-cells" style="grid-template-columns:repeat(' + n + ',minmax(0,1fr))">' +
+        row.map((m, i) => '<div style="' + (n === 2 ? '' : 'align-items:center;text-align:center') + '">' + (m ? '<span>' + esc(m.name) + '</span>' + (m.price ? '<b class="small">' + money(m.price) + '</b>' : '') : '<span class="muted">—</span>') + '</div>').join('') +
+        '</div></div>').join('') + '</div>';
+  }
+  async function loadMenu(id) {
+    const p = FM.placesById[id];
+    if (!p || FM.extras['menu-' + id]) return;
+    FM.extras['menu-' + id] = 'reading';
+    try {
+      const d = await api('/api/menu?id=' + encodeURIComponent(id));
+      if (d.status === 'ok' && d.items && d.items.length) {
+        p.menu = d.items; p.menuComplete = !!d.complete; p.menuAt = d.checkedAt; p.chainMenu = d.source === 'chain';
+        FM.extras['menu-' + id] = 'ok';
+      } else FM.extras['menu-' + id] = d.status || 'none';
+      if (d.description && !p.description) p.description = d.description;
+    } catch (e) { FM.extras['menu-' + id] = 'failed'; }
+    const r = currentRoute();
+    if ((r.name === 'place' && r.id === id) || r.name === 'compare') { const y = window.scrollY; render(); window.scrollTo(0, y); }
+  }
+  function findForm() {
+    let html = '<form class="row gap8" data-form="cmp-find"><label for="cfind" class="sr">Add a place by name</label><input id="cfind" class="text" placeholder="Add any place, like Tommy’s Tavern" maxlength="60"><button class="mini" type="submit" style="min-height:46px">Find</button></form>';
+    const fr = FM.ui.findResults;
+    if (fr === 'loading') html += '<div class="small muted">Searching…</div>';
+    else if (fr && !fr.length) html += '<div class="small muted">No place by that name nearby.</div>';
+    else if (fr) html += '<div class="list-card">' + fr.map((p) => '<div><span class="small"><b>' + esc(p.name) + '</b><br><span class="muted">' + esc(p.address || p.cuisine || '') + '</span></span><button class="mini" data-act="cmp-add" data-id="' + esc(p.id) + '">Add</button></div>').join('') + '</div>';
+    return html;
+  }
+
   function viewCompare() {
     const ps = FM.compare.map((id) => FM.placesById[id]).filter(Boolean);
     let html = '<div class="top"><div class="row between"><div class="row gap6"><a class="icon-btn" href="javascript:history.back()" aria-label="Back">' + I.back + '</a><h1 class="display" style="margin:0;font-size:22px">Head to head</h1></div>' +
-      (ps.length ? '<button class="mini" data-act="cmp-clear">Clear</button>' : '') + '</div>';
+      (ps.length ? '<button class="mini" data-act="cmp-clear">Clear</button>' : '') + '</div>' + findForm();
     if (ps.length < 2) {
       return html + '</div><div class="pad"><div class="empty"><div class="display" style="font-size:20px;color:var(--ink)">Pick 2 or 3 places</div><p>Tap "+ Compare" on any search result, then come back here.</p>' +
         (ps.length ? '<p class="small">You have ' + esc(ps[0].name) + ' so far.</p>' : '') + '<a class="big-btn" href="' + (FM.last && FM.last.q ? searchHash(FM.last.q) : '#/') + '">Find places</a></div></div>';
@@ -545,12 +643,17 @@
     const now = new Date();
     const lastItem = FM.last && FM.last.parsed && FM.last.parsed.items[0];
     const itemMode = FM.ui.cmpMode === 'item' && lastItem;
-    html += '<div class="seg" role="tablist" aria-label="Compare by"><button role="tab" aria-selected="' + !itemMode + '" data-act="cmp-mode" data-v="place">Whole place</button>' +
+    const menuMode = FM.ui.cmpMode === 'menus';
+    html += '<div class="seg" role="tablist" aria-label="Compare by"><button role="tab" aria-selected="' + (!itemMode && !menuMode) + '" data-act="cmp-mode" data-v="place">Whole place</button>' +
+      '<button role="tab" aria-selected="' + menuMode + '" data-act="cmp-mode" data-v="menus">Menus</button>' +
       (lastItem ? '<button role="tab" aria-selected="' + !!itemMode + '" data-act="cmp-mode" data-v="item">' + esc(lastItem.name[0].toUpperCase() + lastItem.name.slice(1)) + '</button>' : '') + '</div>';
+    if (menuMode) {
+      return html + '</div><div class="pad col gap12"><div class="vs-wrap">' + ps.map((p) => '<a href="#/p/' + encodeURIComponent(p.id) + '" class="vs-card"><div style="position:relative">' + photo(p, 'height:84px') + '</div><div style="padding:8px 10px 10px" class="col"><b style="font-size:14px">' + esc(p.name) + '</b></div></a>').join('') + '</div>' + viewMenuCompare(ps) + '<div style="height:20px"></div></div>';
+    }
     const lenses = [['overall', 'Overall'], ['rating', 'Rating'], ['drive', 'Drive'], ['price', 'Price'], ['reviews', 'Most ratings']];
     if (!itemMode) html += '<div class="scroller">' + lenses.map((l) => '<button class="mini' + (FM.ui.lens === l[0] ? ' on' : '') + '" data-act="lens" data-v="' + l[0] + '" style="border-radius:999px">' + l[1] + '</button>').join('') + '</div>';
     html += '</div>';
-    const res = L.rank(Object.values(FM.placesById), L.parseQuery(''), { origin: (FM.last && FM.last.data && FM.last.data.origin) || origin(), now: now, radius: 999, fixedRadius: true, mode: FM.mode, driveMinutes: FM.live ? FM.driveMinutes : null });
+    const res = L.rank(Object.values(FM.placesById), L.parseQuery(''), { origin: (FM.last && FM.last.data && FM.last.data.origin) || origin(), now: now, radius: 999, fixedRadius: true, mode: FM.mode, driveMinutes: FM.driveMinutes });
     const rows = ps.map((p) => res.rows.find((x) => x.place.id === p.id)).filter(Boolean);
     const n = rows.length;
     const mid = (p) => (p.priceRange ? (p.priceRange[0] + p.priceRange[1]) / 2 : p.priceLevel ? p.priceLevel * 12 : null);
@@ -714,7 +817,6 @@
   }
 
   async function setLocationFromText(text) {
-    if (!FM.live) { sheetLocation('Typed locations work once the Google connection is set up. The demo uses Paramus.'); return; }
     try {
       const o = origin();
       const g = await api('/api/geocode?q=' + encodeURIComponent(text) + '&lat=' + o.lat + '&lng=' + o.lng);
@@ -732,6 +834,13 @@
     if (kind === 'search') { const q = f.querySelector('input').value.trim(); if (q) go(searchHash(q)); }
     if (kind === 'loc') { const v = f.querySelector('input').value.trim(); if (v) setLocationFromText(v); }
     if (kind === 'wheel-add') { const v = f.querySelector('input').value.trim(); if (v) { wheelOptions().push({ name: v }); FM.wheel.out = []; FM.wheel.winner = null; render(); const i = document.getElementById('wadd'); if (i) i.focus(); } }
+    if (kind === 'cmp-find') {
+      const v = f.querySelector('input').value.trim(); if (!v) return;
+      FM.ui.findResults = 'loading'; render();
+      const o = origin();
+      api('/api/find?q=' + encodeURIComponent(v) + '&lat=' + o.lat + '&lng=' + o.lng).then((d) => { setPlaces(d.places || []); FM.ui.findResults = d.places || []; render(); })
+        .catch(() => { FM.ui.findResults = []; render(); });
+    }
     if (kind === 'add-item') {
       const v = f.querySelector('input').value.trim(); if (!v || !FM.last) return;
       const p = JSON.parse(JSON.stringify(FM.last.parsed)); p.items.push({ name: L.normalize(v) }); closeSheet(); go(searchHash(rebuildQuery(p)));
@@ -756,7 +865,7 @@
         navigator.geolocation.getCurrentPosition((pos) => setOrigin({ name: 'Your location', lat: pos.coords.latitude, lng: pos.coords.longitude }),
           () => sheetLocation('Location is blocked. Type a town or ZIP instead.'), { timeout: 10000 });
         break;
-      case 'sort': FM.sort = v; if (FM.last && FM.last.data) { FM.last.result = L.rank(FM.last.data.places, FM.last.parsed, { origin: FM.last.data.origin, now: new Date(), radius: FM.radius, mode: FM.mode, sort: v, driveMinutes: FM.live ? FM.driveMinutes : null, minGood: FM.live ? 6 : 3 }); render(); } break;
+      case 'sort': FM.sort = v; if (FM.last && FM.last.data) { FM.last.result = L.rank(FM.last.data.places, FM.last.parsed, { origin: FM.last.data.origin, now: new Date(), radius: FM.radius, mode: FM.mode, sort: v, driveMinutes: FM.driveMinutes, minGood: 6 }); render(); } break;
       case 'rm-item': parsed.items.splice(i, 1); go(searchHash(rebuildQuery(parsed))); break;
       case 'rm-type': parsed.types.splice(i, 1); go(searchHash(rebuildQuery(parsed))); break;
       case 'rm-feat': parsed.features.splice(i, 1); go(searchHash(rebuildQuery(parsed), FM.last.special ? { m: FM.last.special } : {})); break;
@@ -767,6 +876,13 @@
         closeSheet(); go(searchHash(rebuildQuery(parsed))); break;
       }
       case 'retry': route(); break;
+      case 'more': FM.ui.shown = (FM.ui.shown || 30) + 30; { const y = window.scrollY; render(); window.scrollTo(0, y); } break;
+      case 'full-menu': FM.ui.fullMenu = FM.ui.fullMenu === el.getAttribute('data-id') ? null : el.getAttribute('data-id'); { const y = window.scrollY; render(); window.scrollTo(0, y); } break;
+      case 'cmp-add': {
+        const id = el.getAttribute('data-id');
+        if (!FM.compare.includes(id)) { if (FM.compare.length >= 3) FM.compare.shift(); FM.compare.push(id); save('fm-compare', FM.compare); }
+        FM.ui.findResults = null; FM.wheel.options = null; render(); break;
+      }
       case 'toggle-others': FM.ui.showOthers = !FM.ui.showOthers; render(); break;
       case 'toggle-ruled': FM.ui.showRuled = !FM.ui.showRuled; render(); break;
       case 'cmp': {
